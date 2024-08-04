@@ -1,0 +1,6 @@
+# results folder
+results/
+# data folder
+doi_10_5061_dryad_sm847__v20181016/
+
+__pycache__/
