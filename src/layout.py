@@ -25,13 +25,22 @@ def get_layout(type):
         last_row = [(COORDINATE_X-1, i) for i in range(1,COORDINATE_Y-1)]
         first_column = [(i, 0) for i in range(1,COORDINATE_X-1)]
         all_posible_positions = first_row + last_column + last_row[::-1] + first_column[::-1]
-    elif type == 'doubeline_1_enter_50':
+    elif type == 'doubeline_1_enter_50': # 1 enter, 50 machines
         COORDINATE_X = 26
         COORDINATE_Y = 2
         restricted_area = np.zeros((COORDINATE_X, COORDINATE_Y))
         restricted_area[0, 0] = 1
         all_posible_positions = [(i, j) for i in range(COORDINATE_X) for j in range(COORDINATE_Y) if restricted_area[i, j] == 0]
-
+    elif type == 'doubeline_2_enter_50': # 2 inlets, 50 machines
+        COORDINATE_X = 26
+        COORDINATE_Y = 2
+        restricted_area = np.zeros((COORDINATE_X, COORDINATE_Y))
+        all_posible_positions = [(i, j) for i in range(COORDINATE_X) for j in range(COORDINATE_Y) if restricted_area[i, j] == 0]
+    elif type == 'doubeline_4_enter_50':
+        COORDINATE_X = 27
+        COORDINATE_Y = 2
+        restricted_area = np.zeros((COORDINATE_X, COORDINATE_Y))
+        all_posible_positions = [(i, j) for i in range(COORDINATE_X) for j in range(COORDINATE_Y) if restricted_area[i, j] == 0]
     elif type == 'square':
         COORDINATE_X = 12
         COORDINATE_Y = 12
