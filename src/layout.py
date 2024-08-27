@@ -78,6 +78,11 @@ def get_layout(type):
         last_row = [(COORDINATE_X-1, i) for i in range(1,COORDINATE_Y-1)]
         first_column = [(i, 0) for i in range(1,COORDINATE_X-1)]
         all_posible_positions = first_row + last_column + last_row[::-1] + first_column[::-1] + [(1, COORDINATE_Y-2)]
+    elif type == 'singleline_2_enter_50':
+        COORDINATE_X = 52
+        COORDINATE_Y = 1
+        restricted_area = np.zeros((COORDINATE_X, COORDINATE_Y))
+        all_posible_positions = [(i, j) for i in range(COORDINATE_X) for j in range(COORDINATE_Y) if restricted_area[i, j] == 0]
     elif type == 'square':
         COORDINATE_X = 12
         COORDINATE_Y = 12

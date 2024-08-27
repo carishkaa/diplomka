@@ -47,7 +47,8 @@ def evaluate_between_machines(self, x, machines, distances, layout, capsules):
                 self.distances_to_exit[:, enter_machine_idx].min(), 
                 self.distances_to_exit[:, exit_machine_idx].min()
             )
-    elif layout == 'doubeline_2_enter_50' or layout == 'doubeline_4_enter_50' or layout == 'kolecko_2_enter_50' or layout == 'kolecko_4_enter_50' or layout == 'kolecko_1_enter_50':
+    # elif layout == 'doubeline_2_enter_50' or layout == 'doubeline_4_enter_50' or layout == 'kolecko_2_enter_50' or layout == 'kolecko_4_enter_50' or layout == 'kolecko_1_enter_50':
+    else:
         # print('eval')
         # distances_to_exit[exit_idx, machine_idx]
         chromosome = machines[x.astype(int)]
@@ -71,10 +72,10 @@ def evaluate_between_machines(self, x, machines, distances, layout, capsules):
                 distances_to_exit[:, exit_machine_idx].min()
             )
 
-    else:
-        for recept in capsules:
-            min_dist = calc_capsule_distance_overall_combinations(x, recept, distances)
-            sum_of_all_capsules_distances += min_dist
+    # else:
+    #     for recept in capsules:
+    #         min_dist = calc_capsule_distance_overall_combinations(x, recept, distances)
+    #         sum_of_all_capsules_distances += min_dist
     return sum_of_all_capsules_distances
 
 class RecordBsfCosts(Callback):
