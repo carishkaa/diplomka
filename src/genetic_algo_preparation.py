@@ -47,7 +47,7 @@ def evaluate_between_machines(self, x, machines, distances, layout, capsules):
                 self.distances_to_exit[:, enter_machine_idx].min(), 
                 self.distances_to_exit[:, exit_machine_idx].min()
             )
-    elif layout == 'doubeline_2_enter_50' or layout == 'doubeline_4_enter_50':
+    elif layout == 'doubeline_2_enter_50' or layout == 'doubeline_4_enter_50' or layout == 'kolecko_2_enter_50':
         # print('eval')
         # distances_to_exit[exit_idx, machine_idx]
         chromosome = machines[x.astype(int)]
