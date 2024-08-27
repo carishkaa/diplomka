@@ -83,6 +83,11 @@ def get_layout(type):
         COORDINATE_Y = 1
         restricted_area = np.zeros((COORDINATE_X, COORDINATE_Y))
         all_posible_positions = [(i, j) for i in range(COORDINATE_X) for j in range(COORDINATE_Y) if restricted_area[i, j] == 0]
+    elif type == 'singleline_4_enter_50':
+        COORDINATE_X = 54
+        COORDINATE_Y = 1
+        restricted_area = np.zeros((COORDINATE_X, COORDINATE_Y))
+        all_posible_positions = [(i, j) for i in range(COORDINATE_X) for j in range(COORDINATE_Y) if restricted_area[i, j] == 0]
     elif type == 'square':
         COORDINATE_X = 12
         COORDINATE_Y = 12
