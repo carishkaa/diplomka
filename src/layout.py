@@ -65,6 +65,19 @@ def get_layout(type):
         last_row = [(COORDINATE_X-1, i) for i in range(1,COORDINATE_Y-1)]
         first_column = [(i, 0) for i in range(1,COORDINATE_X-1)]
         all_posible_positions = first_row + last_column + last_row[::-1] + first_column[::-1]
+    elif type == 'kolecko_1_enter_50':
+        COORDINATE_X = 15
+        COORDINATE_Y = 14
+        restricted_area = np.zeros((COORDINATE_X, COORDINATE_Y))
+        restricted_area[1:COORDINATE_X-1, 1:COORDINATE_Y-1] = 1
+        restricted_area[[0, 0, -1, -1], [0, -1, -1, 0]] = 1
+        restricted_area[1, COORDINATE_Y-2] = 0
+        # positions as a tape: first row, last column, last row, first column
+        first_row = [(0, i) for i in range(1,COORDINATE_Y-1)]
+        last_column = [(i, COORDINATE_Y-1) for i in range(1,COORDINATE_X-1)]
+        last_row = [(COORDINATE_X-1, i) for i in range(1,COORDINATE_Y-1)]
+        first_column = [(i, 0) for i in range(1,COORDINATE_X-1)]
+        all_posible_positions = first_row + last_column + last_row[::-1] + first_column[::-1] + [(1, COORDINATE_Y-2)]
     elif type == 'square':
         COORDINATE_X = 12
         COORDINATE_Y = 12
