@@ -6,7 +6,6 @@ from pymoo.core.callback import Callback
 
 class Floorplanning(ElementwiseProblem):
     def __init__(self, permutation, machines, capsules, distances, layout, frequences):
-        self.permutation = permutation
         self.capsules = capsules
         # matrix of co-occurences
         self.freq = frequences

@@ -41,6 +41,16 @@ def get_layout(type):
         COORDINATE_Y = 2
         restricted_area = np.zeros((COORDINATE_X, COORDINATE_Y))
         all_posible_positions = [(i, j) for i in range(COORDINATE_X) for j in range(COORDINATE_Y) if restricted_area[i, j] == 0]
+    elif type == 'doubleline_4_enter_80':
+        COORDINATE_X = 42
+        COORDINATE_Y = 2
+        restricted_area = np.zeros((COORDINATE_X, COORDINATE_Y))
+        all_posible_positions = [(i, j) for i in range(COORDINATE_X) for j in range(COORDINATE_Y) if restricted_area[i, j] == 0]
+    elif type == 'doubleline_4_enter_60':
+        COORDINATE_X = 32
+        COORDINATE_Y = 2
+        restricted_area = np.zeros((COORDINATE_X, COORDINATE_Y))
+        all_posible_positions = [(i, j) for i in range(COORDINATE_X) for j in range(COORDINATE_Y) if restricted_area[i, j] == 0]
     elif type == 'kolecko_2_enter_50':
         COORDINATE_X = 15
         COORDINATE_Y = 15
