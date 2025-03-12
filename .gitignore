@@ -4,3 +4,7 @@ results/
 doi_10_5061_dryad_sm847__v20181016/
 
 __pycache__/
+
+not_mine/
+
+.DS_Store

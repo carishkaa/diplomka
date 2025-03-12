@@ -1,3 +1,4 @@
+import time
 import numpy as np
 import argparse
 import csv
@@ -21,32 +22,66 @@ from pymoo.optimize import minimize
 from pymoo.core.callback import Callback
 
 class InterfaceTileSampling(Sampling):
-    def __init__(self, n_interfaces, n_tiles, all_machine_positions_idxs, all_interface_locations_idxs):
+    def __init__(self, n_interfaces, n_tiles, all_machine_positions_idxs, all_interface_locations_idxs, all_available_positions: list[list[int]]):
         """ PermutationRandomSampling for machines and interfaces separately. """
         self.n_interfaces = n_interfaces
         self.n_tiles = n_tiles
         self.all_machine_positions_idxs = all_machine_positions_idxs
         self.all_interface_locations_idxs = all_interface_locations_idxs
+        self.all_available_positions = all_available_positions
         super().__init__()
 
     def _do(self, problem, n_samples, **kwargs):
         X = np.full((n_samples, problem.n_var), -1)
-        for i in range(n_samples):
+        half_samples = n_samples // 2
+
+        # Random
+        for i in range(half_samples):
             # Interfaces locations
             X[i, :self.n_interfaces] = np.random.choice(self.all_interface_locations_idxs, self.n_interfaces, replace=False)
 
             # Dispensers locations (without interfaces) - we can put machine on empty interface-location (TODO discuss if this is correct)
             available_machine_positions_idsx = np.setdiff1d(self.all_machine_positions_idxs, X[i, :self.n_interfaces])
             X[i, self.n_interfaces:] = np.random.choice(available_machine_positions_idsx, self.n_tiles, replace=False)
+
+        # Connected 
+        # TODO check how they look like
+        for i in range(half_samples, n_samples):
+            start_loc = np.random.choice(self.all_interface_locations_idxs, 1)[0]
+            connected_area = [start_loc]
+            interfaces_num = 0
+            interfaces = []
+            machines_num = 0
+            machines = []
+            while interfaces_num < self.n_interfaces or machines_num < self.n_tiles:
+                connect_to = np.random.choice(connected_area, 1)[0]
+                neighbors_coord = get_neighbors(self.all_available_positions[connect_to], self.all_available_positions)
+
+                neighbors_empty = [self.all_available_positions.index(list(n)) for n in neighbors_coord if self.all_available_positions.index(list(n)) not in connected_area]
+                if len(neighbors_empty) == 0:
+                    continue
+                random_neighbor = np.random.choice(neighbors_empty, 1)[0]
+                if random_neighbor in self.all_interface_locations_idxs and interfaces_num < self.n_interfaces:
+                    connected_area.append(random_neighbor)
+                    interfaces.append(random_neighbor)
+                    interfaces_num += 1
+                elif machines_num < self.n_tiles:
+                    connected_area.append(random_neighbor)
+                    machines.append(random_neighbor)
+                    machines_num += 1
+            X[i, :self.n_interfaces] = interfaces
+            X[i, self.n_interfaces:] = machines
+            assert len(np.unique(X[i])) == len(X[i])
         return X
-    
 
 class SeparateOrderCrossover(Crossover):
-    def __init__(self, n_interfaces, n_tiles, shift=False, **kwargs):
+    def __init__(self, n_interfaces, n_tiles, all_machine_positions_idxs, all_interface_locations_idxs, shift=False, **kwargs):
         super().__init__(2, 2, **kwargs)
         self.shift = shift
         self.n_interfaces = n_interfaces
         self.n_tiles = n_tiles
+        self.all_machine_positions_idxs = all_machine_positions_idxs
+        self.all_interface_locations_idxs = all_interface_locations_idxs
 
     def _do(self, problem, X, **kwargs):
         _, n_matings, n_var = X.shape
@@ -68,24 +103,26 @@ class SeparateOrderCrossover(Crossover):
             tiles_b = ox(parent_a[self.n_interfaces:], parent_b[self.n_interfaces:], seq=(start, end), shift=self.shift)
 
             # Check if there are duplicates
-            duplicated_a = set(interfaces_a) & set(tiles_a)
-            duplicated_b = set(interfaces_b) & set(tiles_b)
-            for d in duplicated_a:
-                if len(interfaces_a) > self.n_interfaces:
-                    interfaces_a = np.delete(interfaces_a, np.where(interfaces_a == d))
-                elif len(tiles_a) > self.n_tiles:
-                    tiles_a = np.delete(tiles_a, np.where(tiles_a == d))
-                else:
-                    raise ValueError("Cannot remove element from parent_a") # TODO in this case add random empty location
-            
-            for d in duplicated_b:
-                if len(interfaces_b) > self.n_interfaces:
-                    interfaces_b = np.delete(interfaces_b, np.where(interfaces_b == d))
-                elif len(tiles_b) > self.n_tiles:
-                    tiles_b = np.delete(tiles_b, np.where(tiles_b == d))
-                else:
-                    raise ValueError("Cannot remove element from parent_b") # TODO in this case add random empty location
-            
+            def repair_duplicates(interfaces, tiles):
+                duplicated = set(interfaces) & set(tiles)
+                for d in duplicated:
+                    if len(interfaces) > self.n_interfaces:
+                        interfaces = np.delete(interfaces, np.where(interfaces == d))
+                    elif len(tiles) > self.n_tiles:
+                        tiles = np.delete(tiles, np.where(tiles == d))
+                    else:
+                        random_empty_location = np.random.choice(np.setdiff1d(self.all_machine_positions_idxs, np.concatenate([interfaces, tiles])), 1)
+                        if random_empty_location in self.all_interface_locations_idxs:
+                            index = np.where(interfaces == d)
+                            interfaces[index] = random_empty_location
+                        else:
+                            index = np.where(tiles == d)
+                            tiles[index] = random_empty_location
+                return interfaces, tiles
+
+            interfaces_a, tiles_a = repair_duplicates(interfaces_a, tiles_a)
+            interfaces_b, tiles_b = repair_duplicates(interfaces_b, tiles_b)
+
             assert len(interfaces_a) >= self.n_interfaces
             assert len(interfaces_b) >= self.n_interfaces
             assert len(tiles_a) >= self.n_tiles
@@ -100,24 +137,65 @@ class SeparateOrderCrossover(Crossover):
 
             Y[0, i, :] = offspring_a
             Y[1, i, :] = offspring_b
-
         return Y
-    
-class MachinesInversionMutation(Mutation):
-    def __init__(self, n_interfaces, n_tiles, prob=1.0):
-        """Randomly selects a segment of a chromosome and reverse its order. Applied to machines only."""
+
+class MachinesMutation(Mutation):
+    def __init__(self, n_interfaces, n_tiles, all_machine_positions_idxs, all_available_positions: list[list[int]], prob=1.0):
+        """Randomly selects a segment of a chromosome and reverse its order. Applied to machines only.
+        all_available_positions is array of arrays [x, y]
+        """
         super().__init__()
         self.prob = prob
         self.n_interfaces = n_interfaces
         self.n_tiles = n_tiles
+        self.all_available_positions = all_available_positions
 
     def _do(self, problem, X, **kwargs):
         Y = X.copy()
+
         for i, y in enumerate(X):
-            if np.random.random() < self.prob:
+            # Inverse sequence
+            if np.random.random() < 0.8:
                 seq = random_sequence(self.n_tiles)
                 Y[i, self.n_interfaces:] = inversion_mutation(y[self.n_interfaces:], seq, inplace=True)
                 assert len(np.unique(Y[i])) == len(Y[i])
+            
+            # Swap - exchange two machines
+            if np.random.random() < 0.1:
+                idx = np.random.choice(range(self.n_tiles))
+                new_idx = np.random.choice(np.setdiff1d(range(self.n_tiles), [idx]))
+                Y[i, self.n_interfaces + idx], Y[i, self.n_interfaces + new_idx] = Y[i, self.n_interfaces + new_idx], Y[i, self.n_interfaces + idx]
+                assert len(np.unique(Y[i])) == len(Y[i])
+
+            # Move one location to empty location adjacent to any other machine (on X or Y axis)
+            if np.random.random() < 1:
+                for _ in range(2):
+                    idx = np.random.choice(range(self.n_tiles))
+                    position = self.all_available_positions[Y[i, self.n_interfaces + idx]]
+
+                    directions = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
+                    neighbors_coord = get_neighbors(position, self.all_available_positions, directions)
+                    neighbors = [self.all_available_positions.index(list(n)) for n in neighbors_coord if list(n) in self.all_available_positions]
+                    empty_neighbors = np.setdiff1d(neighbors, Y[i])
+
+                    if len(empty_neighbors) > 0:
+                        # new_idx = np.random.choice(empty_neighbors) # TODO move to the location adjacent to smth else
+                        adjacencies_count = np.zeros(len(empty_neighbors))
+                        for idx, empty_idx in enumerate(empty_neighbors):
+                            for direction in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                                x, y = self.all_available_positions[empty_idx]
+                                nx, ny = x + direction[0], y + direction[1]
+                                if [nx, ny] in self.all_available_positions and self.all_available_positions.index([nx, ny]) in Y[i]:
+                                    adjacencies_count[idx] += 1
+                        new_idx = empty_neighbors[np.argmax(adjacencies_count)]
+                        Y[i, self.n_interfaces + idx] = new_idx
+                assert len(np.unique(Y[i])) == len(Y[i])
+
+
+            # Move block of machines to nearest empty location (on X or Y axis)
+
+
+        # TODO add more operators: move / swap 
 
         return Y
 
@@ -230,7 +308,6 @@ class ObjValCallback(Callback):
         min_idx = min(range(len(algorithm.pop.get("X"))), key=lambda idx: algorithm.pop.get("F")[idx])
         self.data["solution"].append(algorithm.pop.get("X")[min_idx])
 
-
 EMPTY_LOCATION = -1
 BLOCKED_LOCATION = -2
 
@@ -246,9 +323,8 @@ def format_placement(solution, layout_size, all_available_positions, blocked_loc
 
     return placement
 
-def get_neighbors(position, available_machine_positions):
+def get_neighbors(position, available_machine_positions, directions=[(-1, 0), (1, 0), (0, -1), (0, 1)]):
     x, y = position
-    directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]  # Up, Down, Left, Right
     neighbors = []
     
     for dx, dy in directions:
@@ -311,14 +387,14 @@ def compute_placement(args, topology, patient_list, sorted_names, drug_packing):
                                drug_packing=drug_packing, n_interfaces=n_interfaces, n_episodes=n_episodes,
                                elementwise_runner=runner)
 
-    sampling = InterfaceTileSampling(n_interfaces, n_tiles, all_available_position_idxs, interface_position_idxs)
+    sampling = InterfaceTileSampling(n_interfaces, n_tiles, all_available_position_idxs, interface_position_idxs, all_available_positions)
     termination = get_termination("n_eval", n_evals)
 
     algorithm = GA(
         pop_size=n_popsize,
         sampling=sampling,  # binary random sampling
-        crossover=SeparateOrderCrossover(n_interfaces, n_tiles),  # single point crossover
-        mutation=MachinesInversionMutation(n_interfaces, n_tiles),  # bitflip mutation
+        crossover=SeparateOrderCrossover(n_interfaces, n_tiles, all_available_position_idxs, interface_position_idxs),  # single point crossover
+        mutation=MachinesMutation(n_interfaces, n_tiles, all_available_position_idxs, all_available_positions),  # bit-flip mutation
         eliminate_duplicates=True
     )
 
@@ -383,19 +459,20 @@ def save_placement(placement, best_obj, mean_obj, args, checkpoint=None):
         jet_colors = [[start_medicine_color + one_part * i, px.colors.sequential.Jet[i]] for i in range(len(px.colors.sequential.Jet))]
         custom_colors2 = [[0, "black"], [interface_color, "white"]] + jet_colors + [[1, px.colors.sequential.Jet[-1]]]
         
+        unique_id_by_date = str(int(time.time()))
         fig = px.imshow(placement_colors, title=f"expected number of steps: {min(best_obj)}",
                         color_continuous_scale=custom_colors2)
         fig.update_traces(customdata=medicine_labels, hovertemplate='%{customdata}')
         if checkpoint is not None:
-            fig.write_html(os.path.join(args.output, f"topology_{args.topology}_ntiles_{n_tiles}_ninterfaces_{args.interfaces}_nevals_{args.evals}_placer_simulation_checkpoints_{checkpoint}.html"))
+            fig.write_html(os.path.join(args.output, f"topology_{args.topology}_ntiles_{n_tiles}_ninterfaces_{args.interfaces}_nevals_{args.evals}_placer_simulation_checkpoints_{checkpoint}_{unique_id_by_date}.html"))
         else:
-            fig.write_html(os.path.join(args.output, f"topology_{args.topology}_ntiles_{n_tiles}_ninterfaces_{args.interfaces}_nevals_{args.evals}_placer_simulation.html"))
+            fig.write_html(os.path.join(args.output, f"topology_{args.topology}_ntiles_{n_tiles}_ninterfaces_{args.interfaces}_nevals_{args.evals}_placer_simulation_{unique_id_by_date}.html"))
 
         fig_convergence = px.line(pd.DataFrame({"best": best_obj, "mean": mean_obj}), labels=dict(x="generation [-]", y="expected step count [-]"))
         if checkpoint is not None:
-            fig_convergence.write_html(os.path.join(args.output, f"topology_{args.topology}_ntiles_{n_tiles}_ninterfaces_{args.interfaces}_nevals_{args.evals}_convergence_plot_checkpoints_{checkpoint}.html"))
+            fig_convergence.write_html(os.path.join(args.output, f"topology_{args.topology}_ntiles_{n_tiles}_ninterfaces_{args.interfaces}_nevals_{args.evals}_convergence_plot_checkpoints_{checkpoint}_{unique_id_by_date}.html"))
         else:
-            fig_convergence.write_html(os.path.join(args.output, f"topology_{args.topology}_ntiles_{n_tiles}_ninterfaces_{args.interfaces}_nevals_{args.evals}_convergence_plot.html"))
+            fig_convergence.write_html(os.path.join(args.output, f"topology_{args.topology}_ntiles_{n_tiles}_ninterfaces_{args.interfaces}_nevals_{args.evals}_convergence_plot_{unique_id_by_date}.html"))
 
     topology_export = {
         "n_tiles": n_tiles,
@@ -408,6 +485,7 @@ def save_placement(placement, best_obj, mean_obj, args, checkpoint=None):
         "obj": min(best_obj),
         "placement": medicine_labels,
         "packer_result": drug_packing
+        # TODO topology info
     }
 
     filename = f"topology_TODO_ntiles_{n_tiles}_ninterfaces_{args.interfaces}_ndispensers_{drug_input['n_dispensers']}_nevals_{args.evals}.json"
