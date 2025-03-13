@@ -8,3 +8,5 @@ __pycache__/
 not_mine/
 
 .DS_Store
+
+.vscode/
