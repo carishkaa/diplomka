@@ -21,12 +21,23 @@ def generate_multivariate_binary(num_vars, num_samples, marginal_probs, corr_mat
                                             bincorr=corr_matrix)
     sigma = bnd.commonprob2sigma(commonprob)
     if not is_pos_def(sigma):
+        not_pos_def_sigma = sigma
         sigma = cov_nearest(sigma)
 
     µ, Σ = norm.ppf(marginal_probs), sigma
     mvn = multivariate_normal(µ, Σ, allow_singular=True)
-    sample = mvn.rvs(size=num_samples) > 0
-    return sample, µ, Σ
+    sample = mvn.rvs(size=num_samples)
+    # sample_binary = sample > 0
+    # uniformly from 3 to 7 
+
+    # get 3 maximal elements of sample
+    sample_binary = np.zeros_like(sample)
+    for i in range(sample.shape[0]):
+        num_of_drugs = np.random.choice([3, 4, 5, 6, 7, 8], p=[0.92, 0.07, 0.0045, 0.0039, 0.0015, 0.0001])
+        indices = np.argpartition(sample[i], -num_of_drugs)[-num_of_drugs:]
+        sample_binary[i][indices] = 1
+
+    return sample_binary, µ, Σ, mvn.rvs(size=num_samples)
 
 def filter_rows(sample, mu, sigma, target_numvars):
     """ Filter rows with number of ones in the range [3, 7] and add new rows if necessary. """
@@ -73,7 +84,7 @@ def load_dosages(file_path):
     return dosages
 
 def generator(num_vars, num_samples, marginals, corr_matrix, cnames, dosages):
-    sample, mu, sigma = generate_multivariate_binary(num_vars, num_samples, marginals, corr_matrix)
+    sample, mu, sigma, _ = generate_multivariate_binary(num_vars, num_samples, marginals, corr_matrix)
     sample = filter_rows(sample, mu, sigma, num_samples) # number of drugs [3, 7]
     capsules = binary2capsules(sample, cnames)
     capsules['SEQN'] = capsules.index
@@ -95,17 +106,17 @@ def main(num_vars, num_samples, marginals_filename, corr_matrix_filename, cnames
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process input arguments.")
 
-    parser.add_argument("num_vars", type=int, help="Number of variables")
-    parser.add_argument("num_samples", type=int, help="Number of samples to generate")
-    parser.add_argument("marginals_file", type=argparse.FileType('r'), help="CSV file containing marginal probabilities")
-    parser.add_argument("corr_matrix_file", type=argparse.FileType('r'), help="CSV file containing the correlation matrix")
-    parser.add_argument("cnames_file", type=argparse.FileType('r'), help="CSV file containing the drug names in the same order as marginals and correlation matrix")
-    parser.add_argument("dosages_file", type=argparse.FileType('r'), help="Dosages")
+    parser.add_argument("-v", "--num_vars", type=int, help="Number of variables", default=40)
+    parser.add_argument("-n", "--num_samples", type=int, help="Number of samples to generate", default=1000)
+    parser.add_argument("-m", "--marginals", type=argparse.FileType('r'), help="CSV file containing marginal probabilities")
+    parser.add_argument("-c", "--corr_matrix", type=argparse.FileType('r'), help="CSV file containing the correlation matrix")
+    parser.add_argument("--names_file", type=argparse.FileType('r'), help="CSV file containing the drug names in the same order as marginals and correlation matrix")
+    parser.add_argument("-d", "--dosages", type=argparse.FileType('r'), help="Dosages")
     default_output_file = 'generated_capsules_with_dosages.csv'
 
     args = parser.parse_args()
 
-    with warnings.catch_warnings(record=True) as recorded_warnings: # TODO add arg for hiding/showing warnings
+    with warnings.catch_warnings(record=True) as recorded_warnings:
         main(args.num_vars, args.num_samples, args.marginals_file, args.corr_matrix_file, args.cnames_file, args.dosages_file, default_output_file)
 
     print("Generated successfully and saved to \"" + default_output_file + "\".")

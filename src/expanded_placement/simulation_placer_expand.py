@@ -172,7 +172,7 @@ class MachinesMutation(Mutation):
                 assert len(np.unique(Y[i])) == len(Y[i])
 
             # Move one machine to empty location adjacent to any other machine (on X or Y axis)
-            if np.random.random() < 0.2:
+            if np.random.random() < 0.4:
                 idx = np.random.choice(range(self.n_tiles))
                 position = self.all_available_positions[Y[i, self.n_interfaces + idx]]
 
@@ -184,7 +184,7 @@ class MachinesMutation(Mutation):
                 if len(empty_neighbors) > 0:
                     # new_idx = np.random.choice(empty_neighbors)
                     # prefer moving to the location adjacent to smth else
-                    adjacencies_count = np.zeros(len(empty_neighbors))
+                    adjacencies_count = np.zeros(len(empty_neighbors)) # empty_neighbors + current location
                     for idx, empty_idx in enumerate(empty_neighbors):
                         for direction in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
                             x, y = self.all_available_positions[empty_idx]
