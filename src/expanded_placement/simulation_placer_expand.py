@@ -366,6 +366,8 @@ def assert_layout(layout: Layout, n_interfaces: int, n_tiles: int):
     for x, y in layout["unavailable_locations"]:
         assert x < layout["n"] and y < layout["m"] and x >= 0 and y >= 0, f"Blocked location {(x, y)} is out of layout. Check layout file."
     assert layout["n"] * layout["m"] - len(layout["unavailable_locations"]) >= n_interfaces + n_tiles, "Not enough available positions for interfaces and dispensers. Check layout file."
+    duplicate_interfaces = [loc for loc in layout["interface_locations"] if layout["interface_locations"].count(loc) > 1]
+    assert len(duplicate_interfaces) == 0, f"Duplicate interface locations: {duplicate_interfaces}. Check layout file."
 
 def compute_placement(args, layout: Layout, patient_list, sorted_names, drug_packing):
     n_episodes = args.episodes
