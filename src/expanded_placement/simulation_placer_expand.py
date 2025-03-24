@@ -134,12 +134,16 @@ class SeparateOrderCrossover(Crossover):
             assert len(interfaces_b) >= self.n_interfaces
             assert len(tiles_a) >= self.n_tiles
             assert len(tiles_b) >= self.n_tiles
+
+            np.random.shuffle(interfaces_a)
+            np.random.shuffle(interfaces_b)
+
             offspring_a = np.concatenate([interfaces_a[:self.n_interfaces], tiles_a[:self.n_tiles]])
             assert len(offspring_a) == len(parent_a) == len(parent_b)
+            assert len(np.unique(offspring_a)) == len(offspring_a), "Duplicates in offspring A"
+
             offspring_b = np.concatenate([interfaces_b[:self.n_interfaces], tiles_b[:self.n_tiles]])
             assert len(offspring_b) == len(parent_a) == len(parent_b)
-
-            assert len(np.unique(offspring_a)) == len(offspring_a), "Duplicates in offspring A"
             assert len(np.unique(offspring_b)) == len(offspring_b), "Duplicates in offspring B"
 
             Y[0, i, :] = offspring_a
@@ -159,6 +163,7 @@ class MachinesMutation(Mutation):
 
     def _do(self, problem, X, **kwargs):
         Y = X.copy()
+        current_gen = kwargs.get('algorithm').n_gen
 
         # TODO check what operators do we need and with what probability
         for i, y in enumerate(X):
@@ -168,15 +173,17 @@ class MachinesMutation(Mutation):
                 Y[i, self.n_interfaces:] = inversion_mutation(y[self.n_interfaces:], seq, inplace=True)
                 assert len(np.unique(Y[i])) == len(Y[i])
             
+            swap_proba = 0.3 if current_gen < 100 else 0.9
             # Swap - exchange two machines
-            if np.random.random() < 0.3:
+            if np.random.random() < swap_proba: # this is good in the end
                 idx = np.random.choice(range(self.n_tiles))
-                new_idx = np.random.choice(np.setdiff1d(range(self.n_tiles), [idx]))
-                Y[i, self.n_interfaces + idx], Y[i, self.n_interfaces + new_idx] = Y[i, self.n_interfaces + new_idx], Y[i, self.n_interfaces + idx]
+                new_loc = np.random.choice(np.setdiff1d(range(self.n_tiles), [idx]))
+                Y[i, self.n_interfaces + idx], Y[i, self.n_interfaces + new_loc] = Y[i, self.n_interfaces + new_loc], Y[i, self.n_interfaces + idx]
                 assert len(np.unique(Y[i])) == len(Y[i])
 
             # Move one machine to empty location adjacent to any other machine (on X or Y axis)
-            if np.random.random() < 0.4:
+            # move_proba = 0.5 if current_gen < 50 else 0.1
+            if np.random.random() < 0: # this is good in the beginning to try different locations of area
                 idx = np.random.choice(range(self.n_tiles))
                 position = self.all_available_positions[Y[i, self.n_interfaces + idx]]
 
@@ -188,15 +195,23 @@ class MachinesMutation(Mutation):
                 if len(empty_neighbors) > 0:
                     # new_idx = np.random.choice(empty_neighbors)
                     # prefer moving to the location adjacent to smth else
-                    adjacencies_count = np.zeros(len(empty_neighbors)) # empty_neighbors + current location
+                    neigh_adjacencies_count = np.zeros(len(empty_neighbors)) # empty_neighbors + current location
                     for idx, empty_idx in enumerate(empty_neighbors):
                         for direction in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
                             x, y = self.all_available_positions[empty_idx]
                             nx, ny = x + direction[0], y + direction[1]
                             if [nx, ny] in self.all_available_positions and self.all_available_positions.index([nx, ny]) in Y[i]:
-                                adjacencies_count[idx] += 1
-                    new_idx = empty_neighbors[np.argmax(adjacencies_count)]
-                    Y[i, self.n_interfaces + idx] = new_idx
+                                neigh_adjacencies_count[idx] += 1
+                    cur_adjacencies_count = 0
+                    for direction in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                        x, y = position
+                        nx, ny = x + direction[0], y + direction[1]
+                        if [nx, ny] in self.all_available_positions and self.all_available_positions.index([nx, ny]) in Y[i]:
+                            cur_adjacencies_count += 1
+                    if cur_adjacencies_count == 0 or np.max(neigh_adjacencies_count) > cur_adjacencies_count:
+                        Y[i, self.n_interfaces + idx] = empty_neighbors[np.argmax(neigh_adjacencies_count)]
+                    else:
+                        Y[i, self.n_interfaces + idx] = Y[i, self.n_interfaces + idx]
                 assert len(np.unique(Y[i])) == len(Y[i])
         return Y
     
