@@ -199,6 +199,95 @@ class MachinesMutation(Mutation):
                     Y[i, self.n_interfaces + idx] = new_idx
                 assert len(np.unique(Y[i])) == len(Y[i])
         return Y
+    
+class Layout(TypedDict):
+    n: int
+    m: int
+    unavailable_locations: list[tuple[int, int]]
+    interface_locations: list[tuple[int, int]]
+
+class RepairConnectedArea(Repair):
+    def __init__(self, layout: Layout, n_interfaces, n_tiles, all_available_positions_idxs, all_interface_locations_idxs, all_available_positions: list[tuple[int, int]], blocked_positions, distances):
+        self.n_interfaces = n_interfaces
+        self.n_tiles = n_tiles
+        self.all_avail_positions_idxs = all_available_positions_idxs
+        self.all_interface_locations_idxs = all_interface_locations_idxs
+        self.all_available_positions = all_available_positions
+        self.blocked_positions = blocked_positions
+        self.distances = distances
+
+        self.reverse_coord_to_idx = {pos: idx for idx, pos in enumerate(all_available_positions)}
+
+        # array of dicts that contain 'left', 'right', 'up', 'down' keys with valuues = arrays of all the avail positions on in this line on this direction (e.g. for (0,1) it will be {'left': [], 'right': [(1,1), (2,1), ...], 'up': [(0,2), (0,3)], 'down': [(0,0)]}
+        self.direction_positions = []
+        for idx, pos in enumerate(all_available_positions):
+            x, y = pos
+            down = [self.reverse_coord_to_idx[(x, y_)] for y_ in range(y) if (x, y_) in all_available_positions][::-1]
+            up = [self.reverse_coord_to_idx[(x, y_)] for y_ in range(y+1, layout["m"]) if (x, y_) in all_available_positions] # right
+            left = [self.reverse_coord_to_idx[(x_, y)] for x_ in range(x) if (x_, y) in all_available_positions][::-1]
+            right = [self.reverse_coord_to_idx[(x_, y)] for x_ in range(x+1, layout["n"]) if (x_, y) in all_available_positions]
+            self.direction_positions.append({'left': left, 'right': right, 'up': up, 'down': down})
+        super().__init__()
+
+    def _do(self, problem, X: np.ndarray, **kwargs):
+        # Repair to get rid of holes
+
+        # current_gen = kwargs.get('algorithm').n_gen
+        # if current_gen < 100:
+        #     return X
+       
+        for _, individual in enumerate(X):
+            assert len(np.unique(individual)) == len(individual), "Duplicates in individual"
+
+            # 1. Identify holes (empty location that is connected from all 4 sides), or 3 sides but on the boundary, or 2 sides but on the corner
+            holes = []
+            empty_locations = np.setdiff1d(self.all_avail_positions_idxs, individual)
+            for empty_loc in empty_locations:
+                x, y = self.all_available_positions[empty_loc]
+                assert empty_loc not in individual
+                neighbors = get_neighbors((x, y), self.all_available_positions)
+                machine_neighbors = [n for n in neighbors if self.reverse_coord_to_idx[n] in individual[self.n_interfaces:]]
+                blocked_neighbors = get_neighbors((x, y), self.blocked_positions)
+                # neighbors_idx = [self.reverse_coord_to_idx[n] for n in neighbors]
+                assert empty_loc not in individual
+                is_boundary = x == 0 or x == self.all_available_positions[-1][0] or y == 0 or y == self.all_available_positions[-1][1]
+                is_corner = is_boundary and ((x == 0 and y == 0) or (x == 0 and y == self.all_available_positions[-1][1]) or (x == self.all_available_positions[-1][0] and y == 0) or (x == self.all_available_positions[-1][0] and y == self.all_available_positions[-1][1]))
+                if len(machine_neighbors) == 4 \
+                        or (len(machine_neighbors) == 3 and is_boundary) \
+                        or (len(machine_neighbors) == 3 and len(blocked_neighbors) == 1) \
+                        or (len(machine_neighbors) == 2 and is_corner)\
+                        or (len(machine_neighbors) == 2 and is_boundary and len(blocked_neighbors) == 1):
+                    assert empty_loc not in individual
+                    holes.append(empty_loc)
+            
+            # 2. Repair holes - find dispenser that is more distant from interfaces and move it to the hole
+            distances_interface2tile = np.zeros((self.n_interfaces, self.n_tiles))
+            for i, interface in enumerate(individual[:self.n_interfaces]):
+                for j, machine in enumerate(individual[self.n_interfaces:]):
+                    distances_interface2tile[i, j] = self.distances[interface][machine]
+            min_dist_interface2tile = np.min(distances_interface2tile, axis=0)
+
+            while True:
+                current_hole = holes.pop(0) if len(holes) > 0 else None
+                if current_hole is None:
+                    break
+
+                assert current_hole not in individual
+                x, y = self.all_available_positions[current_hole]
+                # find machine that is most distant from interfaces
+                max_dist_idx = np.argmax(min_dist_interface2tile)
+                individual[self.n_interfaces + max_dist_idx] = current_hole
+                assert len(np.unique(individual)) == len(individual), "Duplicates in individual"
+
+                # Recalculate dist_from_interfaces and min_dist_from_interfaces
+                for i, interface in enumerate(individual[:self.n_interfaces]):
+                    distances_interface2tile[i, max_dist_idx] = self.distances[interface][individual[self.n_interfaces + max_dist_idx]]
+
+            X[_, :] = individual
+            assert len(np.unique(individual)) == len(individual), "Duplicates in individual" # todo once there was a problem of duplicated interfaces [8, 79, 47,  8]]
+
+        return X
+
 
 class ExpandedPlacementProblem(ElementwiseProblem):
     def __init__(self, patients, n_tiles, sorted_names, drug_packing, n_interfaces, n_episodes, distances, **kwargs):
@@ -343,16 +432,11 @@ def compute_shortest_path_matrix(available_machine_positions: list[tuple[int, in
             distance_matrix[start_idx][end_idx] = shortest_paths.get(end, float('inf'))
     return distance_matrix
 
-class Layout(TypedDict):
-    n: int
-    m: int
-    unavailable_locations: list[tuple[int, int]]
-    interface_locations: list[tuple[int, int]]
-
 BLOCKED_LOCATION = -2
 EMPTY_LOCATION = -1
 
 def format_placement(solution, layout: Layout, all_available_positions):
+    """ Returns nxm matrix with placement of interfaces and dispensers """
     placement = np.full((layout["n"], layout["m"]), EMPTY_LOCATION)
     for idx, location in enumerate(solution):
         position = all_available_positions[location]
@@ -398,11 +482,13 @@ def compute_placement(args, layout: Layout, patient_list, sorted_names, drug_pac
     empty_location_counts = layout["n"] * layout["m"] - len(layout["unavailable_locations"]) - n_interfaces - n_tiles
     sampling = InterfaceTileSampling(n_interfaces, n_tiles, all_available_position_idxs, interface_position_idxs, all_available_positions, 
                                      percent_of_random_perm=1 if empty_location_counts > 0 else 0.5)
+    repair_holes = RepairConnectedArea(layout, n_interfaces, n_tiles, all_available_position_idxs, interface_position_idxs, all_available_positions, layout["unavailable_locations"], distances)
     termination = get_termination("n_eval", n_evals)
 
     algorithm = GA(
         pop_size=n_popsize,
         sampling=sampling,
+        repair=None if empty_location_counts == 0 else repair_holes,
         crossover=SeparateOrderCrossover(n_interfaces, n_tiles, all_available_position_idxs, interface_position_idxs),
         mutation=MachinesMutation(n_interfaces, n_tiles, all_available_positions),
         eliminate_duplicates=True
