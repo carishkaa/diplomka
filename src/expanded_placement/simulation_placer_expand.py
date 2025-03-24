@@ -305,7 +305,7 @@ class RepairConnectedArea(Repair):
 
 
 class ExpandedPlacementProblem(ElementwiseProblem):
-    def __init__(self, patients, n_tiles, sorted_names, drug_packing, n_interfaces, n_episodes, distances, **kwargs):
+    def __init__(self, patients: list[set], n_tiles, sorted_names, drug_packing, n_interfaces, n_episodes, distances: np.ndarray, **kwargs):
         self.n_tiles = n_tiles
         self.sorted_names = sorted_names
         self.n_interfaces = n_interfaces
@@ -318,7 +318,7 @@ class ExpandedPlacementProblem(ElementwiseProblem):
         self.patients = patients
         reindexed_packing = {}
         for id, drug_list in drug_packing.items():
-            reindexed_packing[n_interfaces+int(id)] = drug_list
+            reindexed_packing[n_interfaces+int(id)] = set(drug_list)
         self.drug_packing = reindexed_packing
         # print('reindexed_packing', reindexed_packing)
 
@@ -329,7 +329,6 @@ class ExpandedPlacementProblem(ElementwiseProblem):
 
         super().__init__(n_var=n_tiles+n_interfaces, n_obj=1, vtype=int, **kwargs)
 
-
     def compatible_dispenser_list(self, drug_name):
         """ Returns a list of dispenser indices that contain the drug_name """
         location_keys = [k for k in self.drug_packing.keys() if drug_name in self.drug_packing[k]]
@@ -337,24 +336,25 @@ class ExpandedPlacementProblem(ElementwiseProblem):
         return location_keys
 
     def sample_from_pdf(self, pdf):
-        normalized_pdf = [p / sum(pdf) for p in pdf]
-        return random.choices(range(len(pdf)), weights=normalized_pdf)[0]
+        return random.choices(range(len(pdf)), weights=pdf)[0]
 
     def _evaluate(self, x, out, *args, **kwargs):
+        starttime = datetime.now()
         interface_locations = x[:self.n_interfaces]
 
         # simulate patients
         total_distance_patients = 0
-        for patient in self.patients:
+        interface_start_idxs = np.random.choice(range(self.n_interfaces), self.n_episodes * len(self.patients)) # pregenerating, it saves time
+
+        for idx_p, patient in enumerate(self.patients):
             #print("---- new patient ----")
 
-            for _ in range(self.n_episodes):
+            for e in range(self.n_episodes):
                 # uniformly random select interface to start
-                interface_start_idx = np.random.randint(0, self.n_interfaces)
-                start_interface_loc = interface_locations[interface_start_idx]
-                prev_loc = start_interface_loc
+                interface_start_idx = interface_start_idxs[idx_p * self.n_episodes + e]
+                prev_loc = interface_locations[interface_start_idx]
 
-                drugs_to_dispense = set(list(patient))
+                drugs_to_dispense = set(patient)
                 #print(f"drug to dispense: {drugs_to_dispense}")
                 distance_for_patient = 0
                 while len(drugs_to_dispense) > 0:
@@ -364,7 +364,7 @@ class ExpandedPlacementProblem(ElementwiseProblem):
                         compatible_dispensers += self.reverse_drug_packing[drug_name] # chromosome: drug = idx, location = element
 
                     compatible_locations = x[compatible_dispensers]
-                    distances_to_sites = [1/(self.distances[prev_loc][loc] + 0.1) for loc in compatible_locations]        # to avoid division by zero
+                    distances_to_sites = 1/(self.distances[prev_loc][compatible_locations] + 0.1)        # to avoid division by zero
 
                     sampled_idx = self.sample_from_pdf(distances_to_sites)  # warning: it is an index to compatible_dispensers array
                     sampled_dispenser = compatible_dispensers[sampled_idx]
@@ -372,7 +372,7 @@ class ExpandedPlacementProblem(ElementwiseProblem):
 
                     assert x[sampled_dispenser] == compatible_locations[sampled_idx] # just checking that everything works, remove this assert later
 
-                    drugs_available_at_location = set(self.drug_packing[sampled_dispenser])
+                    drugs_available_at_location: set = self.drug_packing[sampled_dispenser]
 
                     # multiple drugs might available at the location, we need to pick which to remove from patient
                     remaining_drugs = drugs_to_dispense & drugs_available_at_location       # aka intersection
@@ -382,13 +382,15 @@ class ExpandedPlacementProblem(ElementwiseProblem):
                     prev_loc = cur_loc
 
                 # interface to finish
-                distances_to_sites = [1/(self.distances[prev_loc][loc] + 0.1) for loc in interface_locations]
+                distances_to_sites = 1/(self.distances[prev_loc][interface_locations] + 0.1)
                 interface_finish_idx = self.sample_from_pdf(distances_to_sites)
                 finish_interface_loc = interface_locations[interface_finish_idx]
                 distance_for_patient += self.distances[prev_loc][finish_interface_loc]
 
                 total_distance_patients += distance_for_patient
 
+        endtime = datetime.now()
+        print(f"Time taken in ms: {(endtime - starttime).microseconds / 1000}")
         out["F"] = total_distance_patients/(self.n_episodes*len(self.patients))
         # TODO constraints? (connected area)
 
@@ -411,8 +413,8 @@ class ObjValCallback(Callback):
         self.data["best"].append(algorithm.pop.get("F").min())
         self.data["mean"].append(algorithm.pop.get("F").mean())
 
-        min_idx = min(range(len(algorithm.pop.get("X"))), key=lambda idx: algorithm.pop.get("F")[idx])
-        self.data["solution"].append(algorithm.pop.get("X")[min_idx])
+        best_idx = np.argmin(algorithm.pop.get("F"))
+        self.data["solution"].append(algorithm.pop.get("X")[best_idx])
 
 
 def get_neighbors(position, available_machine_positions: list[tuple[int, int]], directions=[(-1, 0), (1, 0), (0, -1), (0, 1)]) -> list[tuple[int, int]]:
