@@ -23,34 +23,38 @@ from pymoo.optimize import minimize
 from pymoo.core.callback import Callback
 
 class InterfaceTileSampling(Sampling):
-    def __init__(self, n_interfaces, n_tiles, all_machine_positions_idxs, all_interface_locations_idxs, all_available_positions: list[tuple[int, int]]):
+    def __init__(self, n_interfaces, n_tiles, all_machine_positions_idxs, all_interface_locations_idxs, all_available_positions: list[tuple[int, int]], percent_of_random_perm: float):
         """ PermutationRandomSampling for machines and interfaces separately. """
         self.n_interfaces = n_interfaces
         self.n_tiles = n_tiles
         self.all_machine_positions_idxs = all_machine_positions_idxs
         self.all_interface_locations_idxs = all_interface_locations_idxs
         self.all_available_positions = all_available_positions
+
+        assert percent_of_random_perm >= 0 and percent_of_random_perm <= 1, "percent_of_random_perm should be in range [0, 1]"
+        self.percent_of_random_perm = percent_of_random_perm
         super().__init__()
 
     def _do(self, problem, n_samples, **kwargs):
         X = np.full((n_samples, problem.n_var), -1)
-        half_samples = n_samples // 2
+        num_random_samples = int(n_samples * self.percent_of_random_perm)
 
         # Random permutations
-        for i in range(half_samples):
+        for i in range(num_random_samples):
             # Interfaces locations
             X[i, :self.n_interfaces] = np.random.choice(self.all_interface_locations_idxs, self.n_interfaces, replace=False)
 
             # Dispensers locations (without interfaces) - we can put machine on empty interface-location (TODO discuss if this is correct)
             available_machine_positions_idsx = np.setdiff1d(self.all_machine_positions_idxs, X[i, :self.n_interfaces])
             X[i, self.n_interfaces:] = np.random.choice(available_machine_positions_idsx, self.n_tiles, replace=False)
+            assert len(np.unique(X[i])) == len(X[i])
 
         # Connected
-        for i in range(half_samples, n_samples):
+        for i in range(num_random_samples, n_samples):
             start_loc = np.random.choice(self.all_interface_locations_idxs, 1)[0]
             connected_area = [start_loc]
-            interfaces_num = 0
-            interface_locations = []
+            interfaces_num = 1
+            interface_locations = [start_loc]
             machines_num = 0
             machine_locations = []
 
@@ -391,7 +395,9 @@ def compute_placement(args, layout: Layout, patient_list, sorted_names, drug_pac
                                drug_packing=drug_packing, n_interfaces=n_interfaces, n_episodes=n_episodes,
                                elementwise_runner=runner)
 
-    sampling = InterfaceTileSampling(n_interfaces, n_tiles, all_available_position_idxs, interface_position_idxs, all_available_positions)
+    empty_location_counts = layout["n"] * layout["m"] - len(layout["unavailable_locations"]) - n_interfaces - n_tiles
+    sampling = InterfaceTileSampling(n_interfaces, n_tiles, all_available_position_idxs, interface_position_idxs, all_available_positions, 
+                                     percent_of_random_perm=1 if empty_location_counts > 0 else 0.5)
     termination = get_termination("n_eval", n_evals)
 
     algorithm = GA(
