@@ -295,12 +295,13 @@ class RepairHoles(Repair):
 
 
 class ExpandedPlacementProblem(ElementwiseProblem):
-    def __init__(self, patients: list[set], n_tiles, sorted_names, drug_packing, n_interfaces, n_episodes, distances: np.ndarray, **kwargs):
+    def __init__(self, patients: list[set], n_tiles, sorted_names, drug_packing, n_interfaces, n_episodes, distances: np.ndarray, drug_dosing, **kwargs):
         self.n_tiles = n_tiles
         self.sorted_names = sorted_names
         self.n_interfaces = n_interfaces
         self.n_episodes = n_episodes
         self.interface_indices = np.array(range(n_interfaces))
+        self.drug_dosing = drug_dosing
 
         self.distances = distances
 
@@ -317,9 +318,6 @@ class ExpandedPlacementProblem(ElementwiseProblem):
             self.reverse_drug_packing[drug_name] = self.compatible_dispenser_list(drug_name)
         # print('reverse_drug_packing', self.reverse_drug_packing)
 
-        # Shows how many times a machine/interface was used during the simulation for all patients for given solution
-        self.processing_count = np.zeros(n_tiles+n_interfaces, dtype=int)
-
         super().__init__(n_var=n_tiles+n_interfaces, n_obj=1, vtype=int, **kwargs)
 
     def compatible_dispenser_list(self, drug_name):
@@ -332,8 +330,11 @@ class ExpandedPlacementProblem(ElementwiseProblem):
         return random.choices(range(len(pdf)), weights=pdf)[0]
 
     def _evaluate(self, x, out, *args, **kwargs):
-        self.processing_count = np.zeros(self.n_tiles+self.n_interfaces, dtype=int)
-        starttime = datetime.now() # TODO remove - tracks time of evaluation
+        # starttime = datetime.now() # TODO remove - tracks time of evaluation
+
+        processing_count = np.zeros(self.n_tiles+self.n_interfaces, dtype=int)
+        processing_time = np.zeros(self.n_tiles+self.n_interfaces, dtype=int)
+
         interface_locations = x[:self.n_interfaces]
 
         # simulate patients
@@ -341,16 +342,14 @@ class ExpandedPlacementProblem(ElementwiseProblem):
         interface_start_idxs = np.random.choice(range(self.n_interfaces), self.n_episodes * len(self.patients)) # pregenerating, it saves time
 
         for idx_p, patient in enumerate(self.patients):
-            #print("---- new patient ----")
-
             for e in range(self.n_episodes):
-                # uniformly random select interface to start
+                # Randomly select interface to start
                 interface_start_idx = interface_start_idxs[idx_p * self.n_episodes + e]
                 prev_loc = interface_locations[interface_start_idx]
-                self.processing_count[interface_start_idx] += 1
+                processing_count[interface_start_idx] += 1
+                processing_time[interface_start_idx] += 1
 
                 drugs_to_dispense = set(patient)
-                #print(f"drug to dispense: {drugs_to_dispense}")
                 distance_for_patient = 0
                 while len(drugs_to_dispense) > 0:
 
@@ -364,7 +363,6 @@ class ExpandedPlacementProblem(ElementwiseProblem):
                     sampled_idx = self.sample_from_pdf(distances_to_sites)  # warning: it is an index to compatible_dispensers array
                     sampled_dispenser = compatible_dispensers[sampled_idx]
                     cur_loc = x[sampled_dispenser]
-                    self.processing_count[sampled_dispenser] += 1
 
                     assert x[sampled_dispenser] == compatible_locations[sampled_idx] # just checking that everything works, remove this assert later
 
@@ -373,7 +371,10 @@ class ExpandedPlacementProblem(ElementwiseProblem):
                     # multiple drugs might available at the location, we need to pick which to remove from patient
                     remaining_drugs = drugs_to_dispense & drugs_available_at_location       # aka intersection
                     assert len(remaining_drugs) > 0
-                    drugs_to_dispense.remove(remaining_drugs.pop())
+                    current_drug = remaining_drugs.pop()
+                    processing_count[sampled_dispenser] += 1
+                    processing_time[sampled_dispenser] += drug_dosing[current_drug]
+                    drugs_to_dispense.remove(current_drug)
                     distance_for_patient += self.distances[prev_loc][cur_loc]
                     prev_loc = cur_loc
 
@@ -382,14 +383,16 @@ class ExpandedPlacementProblem(ElementwiseProblem):
                 interface_finish_idx = self.sample_from_pdf(distances_to_sites)
                 finish_interface_loc = interface_locations[interface_finish_idx]
                 distance_for_patient += self.distances[prev_loc][finish_interface_loc]
-                self.processing_count[interface_finish_idx] += 1
+                processing_count[interface_finish_idx] += 1
+                processing_time[interface_finish_idx] += 1
 
                 total_distance_patients += distance_for_patient
 
-        endtime = datetime.now()
-        print(f"Time taken in ms: {(endtime - starttime).microseconds / 1000}")
+        # endtime = datetime.now()
+        # print(f"Time taken in ms: {(endtime - starttime).microseconds / 1000}")
         out["F"] = total_distance_patients/(self.n_episodes*len(self.patients))
-        out["processing_count"] = self.processing_count
+        out["processing_count"] = processing_count
+        out["processing_time"] = processing_time
         # TODO constraints? (connected area)
 
 class ObjValCallback(Callback):
@@ -398,6 +401,7 @@ class ObjValCallback(Callback):
         self.data["best"] = []
         self.data["mean"] = []
         self.data["processing_count"] = []
+        self.data["processing_time"] = []
         self.data["solution"] = []
 
         self.n_patients = n_patients
@@ -417,6 +421,7 @@ class ObjValCallback(Callback):
         min_idx = min(range(len(algorithm.pop.get("X"))), key=lambda idx: algorithm.pop.get("F")[idx]) # TODO remove
         assert best_idx == min_idx
         self.data["processing_count"].append(algorithm.pop.get("processing_count")[best_idx])
+        self.data["processing_time"].append(algorithm.pop.get("processing_time")[best_idx])
         self.data["solution"].append(algorithm.pop.get("X")[best_idx])
 
 
@@ -477,7 +482,7 @@ def assert_layout(layout: Layout, n_interfaces: int, n_tiles: int):
     duplicate_interfaces = [loc for loc in layout["interface_locations"] if layout["interface_locations"].count(loc) > 1]
     assert len(duplicate_interfaces) == 0, f"Duplicate interface locations: {duplicate_interfaces}. Check layout file."
 
-def compute_placement(args, layout: Layout, patient_list, sorted_names, drug_packing):
+def compute_placement(args, layout: Layout, patient_list, sorted_names, drug_packing, drug_dosing):
     n_episodes = args.episodes
     n_interfaces = args.interfaces
     n_popsize = args.pop_size
@@ -486,6 +491,7 @@ def compute_placement(args, layout: Layout, patient_list, sorted_names, drug_pac
     # Layout
     assert_layout(layout, n_interfaces, n_tiles)
     all_available_positions = [(x, y) for x in range(layout["n"]) for y in range(layout["m"]) if (x, y) not in layout["unavailable_locations"]]
+    empty_location_counts = layout["n"] * layout["m"] - len(layout["unavailable_locations"]) - n_interfaces - n_tiles
 
     # Chromosome representation: [loc_interface1, ..., loc_interfaceN, loc_dispenser1, ..., loc_dispenserM]
     all_available_position_idxs = list(range(len(all_available_positions)))
@@ -497,9 +503,8 @@ def compute_placement(args, layout: Layout, patient_list, sorted_names, drug_pac
     runner = StarmapParallelization(pool.starmap)
     problem = ExpandedPlacementProblem(patient_list, n_tiles=n_tiles, distances=distances, sorted_names=sorted_names,
                                drug_packing=drug_packing, n_interfaces=n_interfaces, n_episodes=n_episodes,
-                               elementwise_runner=runner)
+                               elementwise_runner=runner, drug_dosing=drug_dosing)
 
-    empty_location_counts = layout["n"] * layout["m"] - len(layout["unavailable_locations"]) - n_interfaces - n_tiles
     sampling = InterfaceTileSampling(n_interfaces, n_tiles, all_available_position_idxs, interface_position_idxs, all_available_positions, 
                                      percent_of_random_perm=1 if empty_location_counts > 0 else 0.5)
     repair_holes = RepairHoles(layout, n_interfaces, n_tiles, all_available_position_idxs, interface_position_idxs, all_available_positions, layout["unavailable_locations"], distances)
@@ -627,22 +632,37 @@ def save_placement(placement, best_obj, mean_obj, args, checkpoint=None):
               indent=4
     )
 
-def save_processing_count(placement, processing_count, args):
+def save_processing_count(placement, processing_count, processing_times, args):
     # store a picture with heatmap of processing counts for each machine and interface
     xs = range(len(placement[0]))
     ys = range(len(placement))
 
     processing_counts_matrix = np.zeros((len(placement), len(placement[0])))
+    processing_times_matrix = np.zeros((len(placement), len(placement[0])))
+    medicine_labels = get_medicine_labels(placement, args, drug_packing, xs, ys)
     for i in ys:
         for j in xs:
             if placement[i, j] == EMPTY_LOCATION:
                 processing_counts_matrix[i, j] = np.nan
+                processing_times_matrix[i, j] = np.nan
             elif placement[i, j] == BLOCKED_LOCATION:
                 processing_counts_matrix[i, j] = np.nan
+                processing_times_matrix[i, j] = np.nan
             else:
                 processing_counts_matrix[i, j] = processing_count[placement[i, j]]
+                processing_times_matrix[i, j] = processing_times[placement[i, j]]
+
+    processing_times_text = processing_times_matrix.copy().astype(str)
+    for i in range(len(medicine_labels)):
+        for j in range(len(medicine_labels[0])):
+            if medicine_labels[i][j] == "interface":
+                processing_times_text[i, j] = f"I: {int(processing_times_matrix[i, j])}"
+            if medicine_labels[i][j] == "empty":
+                processing_times_text[i, j] = "empty"
+            if medicine_labels[i][j] == "blocked":
+                processing_times_text[i, j] = "blocked"
     
-    medicine_labels = get_medicine_labels(placement, args, drug_packing, xs, ys)
+
     fig = px.imshow(processing_counts_matrix, title="Processing count for each machine and interface in the solution",
                     color_continuous_scale="Viridis", text_auto=True)
     fig.update_layout(
@@ -652,12 +672,32 @@ def save_processing_count(placement, processing_count, args):
     fig.update_traces(customdata=medicine_labels, hovertemplate='%{customdata}', xgap=0.1, ygap=0.1)
     fig.write_html(os.path.join(args.output, "processing_count.html"))
 
+    fig_times = px.imshow(processing_times_matrix, title="Processing time for each machine and interface in the solution",
+                    color_continuous_scale="Viridis", text_auto=True)
+    fig_times.update_layout(
+        xaxis = dict(tickmode = 'linear', tick0 = 0, dtick = 1, mirror=True, showline=True, linecolor='lightgray'),
+        yaxis = dict(tickmode = 'linear', tick0 = 0, dtick = 1, mirror=True, showline=True, linecolor='lightgray')
+    )
+    fig_times.update_traces(customdata=medicine_labels, hovertemplate='%{customdata}', 
+                            text=processing_times_text, texttemplate="%{text}",
+                            xgap=0.1, ygap=0.1)
+    fig_times.write_html(os.path.join(args.output, "processing_times.html"))
+
 
 def load_layout(args):
     layout = json.load(open(args.layout, "r"))
     layout["interface_locations"] = [tuple(loc) for loc in layout["interface_locations"]]
     layout["unavailable_locations"] = [tuple(loc) for loc in layout["unavailable_locations"]]
     return layout
+
+def load_drug_dosing():
+    drug_dosing = {}
+    with open("drugs_dosing.csv", "r") as drugs_dosing_file:
+        reader = csv.reader(drugs_dosing_file, delimiter=";")
+        next(reader)
+        for line in reader:
+            drug_dosing[line[0]] = np.mean([int(line[-2]), int(line[-1])])
+    return drug_dosing
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -678,6 +718,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     layout: Layout = load_layout(args)
 
+    drug_dosing = load_drug_dosing() # TODO would make more sense to store it in packer json file, and load it from there
+
     drug_input = json.load(open(args.packing, "r"))
     sorted_names = drug_input["sorted_names"]
     drug_packing = drug_input["packing"]
@@ -694,12 +736,12 @@ if __name__ == '__main__':
             requested_drugs = line[1][2:-2].split("', '")
             patient_list += [set(requested_drugs)]
 
-    placement, res = compute_placement(args, layout, patient_list, sorted_names, drug_packing)
+    placement, res = compute_placement(args, layout, patient_list, sorted_names, drug_packing, drug_dosing)
 
     # Plot init population
     # plot_init_pop(args, layout, drug_packing, res)
 
-    save_processing_count(placement, res.algorithm.callback.data["processing_count"][-1], args)
+    save_processing_count(placement, res.algorithm.callback.data["processing_count"][-1], res.algorithm.callback.data["processing_time"][-1], args)
 
     if args.checkpoints:
         solutions = res.algorithm.callback.data["solution"]
