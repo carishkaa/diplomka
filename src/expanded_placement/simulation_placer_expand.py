@@ -249,24 +249,10 @@ class RepairHoles(Repair):
                 or (len(present_neighbors) == 2 and len(blocked_neighbors) == 2):
             return True
         return False
-
-    def _do(self, problem, X: np.ndarray, **kwargs):
-        # Repair to get rid of holes
-
-        # current_gen = kwargs.get('algorithm').n_gen
-        # if current_gen < 100:
-        #     return X
-       
-        for _, individual in enumerate(X):
-            # 1. Identify holes
-            holes = []
-            empty_locations = np.setdiff1d(self.all_avail_positions_idxs, individual)
-            for empty_loc in empty_locations:
-                assert empty_loc not in individual # TODO remove, used for debugging
-                if self.is_hole(empty_loc, individual):
-                    holes.append(empty_loc)
-            
-            # 2. Repair holes - find dispenser that is more distant from interfaces and move it to the hole
+    
+    def repair_holes(self, old_individual, holes):
+        individual = old_individual.copy()
+        if len(holes) > 0:
             distances_interface2tile = np.zeros((self.n_interfaces, self.n_tiles))
             for i, interface in enumerate(individual[:self.n_interfaces]):
                 for j, machine in enumerate(individual[self.n_interfaces:]):
@@ -287,9 +273,22 @@ class RepairHoles(Repair):
                 for i, interface in enumerate(individual[:self.n_interfaces]):
                     distances_interface2tile[i, max_dist_idx] = self.distances[interface][individual[self.n_interfaces + max_dist_idx]]
                 min_dist_interface2tile = np.min(distances_interface2tile, axis=0)
+        return individual
 
-            X[_, :] = individual
-            assert len(np.unique(individual)) == len(individual), "Duplicates in individual" # TODO remove?, used for debugging
+    def _do(self, problem, X: np.ndarray, **kwargs):
+        # if kwargs.get('algorithm').n_gen < 100:
+        #     return X
+       
+        for _, individual in enumerate(X):
+            empty_locations = np.setdiff1d(self.all_avail_positions_idxs, individual)
+            
+            holes = []
+            for empty_loc in empty_locations:
+                assert empty_loc not in individual # TODO remove, used for debugging
+                if self.is_hole(empty_loc, individual):
+                    holes.append(empty_loc)
+            X[_, :] = self.repair_holes(individual, holes)
+            assert len(np.unique(X[_, :])) == len(X[_, :]), "Duplicates in individual" # TODO remove?, used for debugging
 
         return X
 
