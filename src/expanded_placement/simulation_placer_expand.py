@@ -222,6 +222,7 @@ class Layout(TypedDict):
     interface_locations: list[tuple[int, int]]
 
 class RepairHoles(Repair):
+    # TODO maybe repair not only holes, but use it as a mutation and try it for all empty locations - move most distant machine to this empty locations 
     def __init__(self, layout: Layout, n_interfaces, n_tiles, all_available_positions_idxs, all_interface_locations_idxs, all_available_positions: list[tuple[int, int]], blocked_positions, distances):
         self.n_interfaces = n_interfaces
         self.n_tiles = n_tiles
@@ -236,16 +237,16 @@ class RepairHoles(Repair):
     def is_hole(self, empty_loc, individual):
         x, y = self.all_available_positions[empty_loc]
         neighbors = get_neighbors((x, y), self.all_available_positions)
-        dispenser_neighbors = [n for n in neighbors if self.reverse_coord_to_idx[n] in individual[self.n_interfaces:]]
+        present_neighbors = [n for n in neighbors if self.reverse_coord_to_idx[n] in individual]
         blocked_neighbors = get_neighbors((x, y), self.blocked_positions)
         is_boundary = x == 0 or x == self.all_available_positions[-1][0] or y == 0 or y == self.all_available_positions[-1][1]
         is_corner = is_boundary and ((x == 0 and y == 0) or (x == 0 and y == self.all_available_positions[-1][1]) or (x == self.all_available_positions[-1][0] and y == 0) or (x == self.all_available_positions[-1][0] and y == self.all_available_positions[-1][1]))
-        if len(dispenser_neighbors) == 4 \
-                or (len(dispenser_neighbors) == 3 and is_boundary) \
-                or (len(dispenser_neighbors) == 3 and len(blocked_neighbors) == 1) \
-                or (len(dispenser_neighbors) == 2 and is_corner)\
-                or (len(dispenser_neighbors) == 2 and is_boundary and len(blocked_neighbors) == 1)\
-                or (len(dispenser_neighbors) == 2 and len(blocked_neighbors) == 2):
+        if len(present_neighbors) == 4 \
+                or (len(present_neighbors) == 3 and is_boundary) \
+                or (len(present_neighbors) == 3 and len(blocked_neighbors) == 1) \
+                or (len(present_neighbors) == 2 and is_corner)\
+                or (len(present_neighbors) == 2 and is_boundary and len(blocked_neighbors) == 1)\
+                or (len(present_neighbors) == 2 and len(blocked_neighbors) == 2):
             return True
         return False
 
