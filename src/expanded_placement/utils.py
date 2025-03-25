@@ -1,3 +1,4 @@
+# Storing here some functions that i don't need anymore in case i need them later
 from plotly.subplots import make_subplots
 def plot_init_pop(format_placement, get_medicine_labels, get_placement_colors, get_color_scale, args, layout: Layout, drug_packing, res):
     layout_size = (layout["n"], layout["m"])
@@ -23,6 +24,16 @@ def plot_init_pop(format_placement, get_medicine_labels, get_placement_colors, g
 
 
 # MOVING REPAIR
+
+# array of dicts that contain 'left', 'right', 'up', 'down' keys with valuues = arrays of all the avail positions on in this line on this direction (e.g. for (0,1) it will be {'left': [], 'right': [(1,1), (2,1), ...], 'up': [(0,2), (0,3)], 'down': [(0,0)]}
+    # self.direction_positions = []
+    # for idx, pos in enumerate(all_available_positions):
+    #     x, y = pos
+    #     down = [self.reverse_coord_to_idx[(x, y_)] for y_ in range(y) if (x, y_) in all_available_positions][::-1]
+    #     up = [self.reverse_coord_to_idx[(x, y_)] for y_ in range(y+1, layout["m"]) if (x, y_) in all_available_positions] # right
+    #     left = [self.reverse_coord_to_idx[(x_, y)] for x_ in range(x) if (x_, y) in all_available_positions][::-1]
+    #     right = [self.reverse_coord_to_idx[(x_, y)] for x_ in range(x+1, layout["n"]) if (x_, y) in all_available_positions]
+    #     self.direction_positions.append({'left': left, 'right': right, 'up': up, 'down': down})
 
 # 2. Repair holes - identify where there is more machines+interfaces - up/down/left/right and move the opposite side to the hole
             # while True: 
