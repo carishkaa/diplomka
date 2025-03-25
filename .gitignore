@@ -10,3 +10,5 @@ not_mine/
 .DS_Store
 
 .vscode/
+
+.venv
