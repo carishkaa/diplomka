@@ -236,8 +236,7 @@ class RepairHoles(Repair):
 
     def is_hole(self, empty_loc, individual):
         x, y = self.all_available_positions[empty_loc]
-        neighbors = get_neighbors((x, y), self.all_available_positions)
-        present_neighbors = [n for n in neighbors if self.reverse_coord_to_idx[n] in individual]
+        present_neighbors = get_neighbors((x, y), [self.all_available_positions[i] for i in individual])
         blocked_neighbors = get_neighbors((x, y), self.blocked_positions)
         is_boundary = x == 0 or x == self.all_available_positions[-1][0] or y == 0 or y == self.all_available_positions[-1][1]
         is_corner = is_boundary and ((x == 0 and y == 0) or (x == 0 and y == self.all_available_positions[-1][1]) or (x == self.all_available_positions[-1][0] and y == 0) or (x == self.all_available_positions[-1][0] and y == self.all_available_positions[-1][1]))
@@ -281,14 +280,41 @@ class RepairHoles(Repair):
        
         for _, individual in enumerate(X):
             empty_locations = np.setdiff1d(self.all_avail_positions_idxs, individual)
-            
             holes = []
             for empty_loc in empty_locations:
                 assert empty_loc not in individual # TODO remove, used for debugging
                 if self.is_hole(empty_loc, individual):
                     holes.append(empty_loc)
             X[_, :] = self.repair_holes(individual, holes)
-            assert len(np.unique(X[_, :])) == len(X[_, :]), "Duplicates in individual" # TODO remove?, used for debugging
+            assert len(np.unique(X[_, :])) == len(X[_, :]), "Duplicates in individual after holes repair" # TODO remove?, used for debugging
+
+
+            empty_locations = np.setdiff1d(self.all_avail_positions_idxs, individual)
+            lonely_dispensers = []
+            for dispenser_id in range(self.n_interfaces, self.n_interfaces + self.n_tiles):
+                x, y = self.all_available_positions[individual[dispenser_id]]
+                present_neighbors = get_neighbors((x, y), [self.all_available_positions[i] for i in individual])
+                if len(present_neighbors) == 0:
+                    lonely_dispensers.append(dispenser_id)
+
+            empty_adjacent = [n for n in empty_locations if len(get_neighbors(self.all_available_positions[n], [self.all_available_positions[i] for i in individual])) > 0]
+            dist_interface2emptyAdj = np.zeros((self.n_interfaces, len(empty_adjacent)))
+            for i, interface in enumerate(individual[:self.n_interfaces]):
+                for j, empty in enumerate(empty_adjacent):
+                    dist_interface2emptyAdj[i, j] = self.distances[interface][empty]
+            min_dist_interface2emptyAdj = np.min(dist_interface2emptyAdj, axis=0)
+            while len(lonely_dispensers) > 0:
+                dispenser_id = lonely_dispensers.pop(0)
+                individual[dispenser_id] = empty_adjacent[np.argmin(min_dist_interface2emptyAdj)]
+                assert len(np.unique(individual)) == len(individual), "Duplicates in individual after loners repair"
+
+                # remove from empty_adjacent, recalculate distances
+                empty_adjacent = np.setdiff1d(empty_adjacent, [individual[dispenser_id]])
+                dist_interface2emptyAdj = np.delete(dist_interface2emptyAdj, np.argmin(min_dist_interface2emptyAdj), axis=1)
+                min_dist_interface2emptyAdj = np.min(dist_interface2emptyAdj, axis=0)
+
+            X[_, :] = individual
+            assert len(np.unique(X[_, :])) == len(X[_, :]), "Duplicates in individual after loners repair"
 
         return X
 
