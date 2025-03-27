@@ -706,7 +706,112 @@ def save_processing_count(placement, processing_count, processing_times, args):
     fig_times.update_traces(customdata=medicine_labels, hovertemplate='%{customdata}', 
                             text=processing_times_text, texttemplate="%{text}",
                             xgap=0.1, ygap=0.1)
-    fig_times.write_html(os.path.join(args.output, "processing_times.html"))
+    file_path = os.path.join(args.output, "processing_times.html")
+    fig_times.write_html(file_path, include_plotlyjs='cdn', full_html=True)
+    inject_highlight_script(file_path)
+
+
+def inject_highlight_script(file_path):
+    """ Injects script to highlight on click same dispensers in the plot """
+    js_script = """
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            var plot = document.getElementsByClassName('plotly-graph-div')[0];
+
+            var z_curr = plot.data[0].z;
+            var customData = plot.data[0].customdata;
+            console.log(customData);
+
+            plot.on('plotly_click', function (data) {
+                var clickedCustomData = data.points[0].customdata;
+                if (clickedCustomData === 'empty' || clickedCustomData === 'blocked') {
+                    return
+                }
+                var allCustomData = data.points[0].data.customdata // [["a", "b"], ["c", "d"]]
+                const z = data.points[0].fullData.z
+                let newText = Array.from(Array(z.length), () => Array(z[0].length).fill(''));
+
+                for (let i = 0; i < allCustomData.length; i++) {
+                    for (let j = 0; j < allCustomData[i].length; j++) {
+                        if (allCustomData[i][j] === 'interface') {
+                            newText[i][j] = 'I'
+                        } else if (allCustomData[i][j] === 'blocked' || allCustomData[i][j] === 'empty') {
+                            newText[i][j] = allCustomData[i][j]
+                        } 
+                        // Clicked = multiple, other multiple
+                        else if (clickedCustomData.includes(',') && allCustomData[i][j].includes(',')) {
+                            let splittedClicked = allCustomData[i][j].split(',')
+                            let splittedOther = clickedCustomData.split(',')
+                            let intersection = splittedClicked.filter(x => splittedOther.includes(x))
+                            if (intersection.length > 0) {
+                                newText[i][j] = String(z[i][j])
+                            } else {
+                                newText[i][j] = ' '
+                            }
+                        }
+                        // Clicked = multiple, other single
+                        else if (clickedCustomData.includes(',') && !allCustomData[i][j].includes(',')) {
+                            let splittedClicked = clickedCustomData.split(',')
+                            if (splittedClicked.includes(allCustomData[i][j])) {
+                                newText[i][j] = String(z[i][j])
+                            } else {
+                                newText[i][j] = ' '
+                            }
+                        }
+                        // Clicked = single, other multiple
+                        else if (!clickedCustomData.includes(',') && allCustomData[i][j].includes(',')) {
+                            let splittedOther = allCustomData[i][j].split(',')
+                            if (splittedOther.includes(clickedCustomData)) {
+                                newText[i][j] = String(z[i][j])
+                            } else {
+                                newText[i][j] = ' '
+                            }
+                        }
+                        // Clicked = single, other single 
+                        else if (allCustomData[i][j] === clickedCustomData) {
+                            newText[i][j] = String(z[i][j])
+                        } 
+                        else {
+                            newText[i][j] = ' '
+                        }
+                    }
+                }
+
+                Plotly.restyle(plot, {
+                    'text': [newText],
+                });
+            });
+
+            plot.on('plotly_doubleclick', function () {
+                let newText = Array.from(Array(z_curr._inputArray.length), () => Array(z_curr._inputArray[0].length).fill(''));
+                for (let i = 0; i < z_curr._inputArray.length; i++) {
+                    for (let j = 0; j < z_curr._inputArray[i].length; j++) {
+                        if (customData[i][j] === 'empty' || customData[i][j] === 'blocked') {
+                            newText[i][j] = customData[i][j]
+                        } else if (customData[i][j] === 'interface') {
+                            newText[i][j] = 'I: ' + String(z_curr._inputArray[i][j])
+                        } else {
+                            newText[i][j] = String(z_curr._inputArray[i][j])
+                        }
+                    }
+                }
+                setTimeout(function (){
+                    Plotly.restyle(plot, {
+                    'text': [newText],
+                });
+                }, 30);
+            });
+        });
+    </script>
+    """
+
+    with open(file_path, "r", encoding="utf-8") as file:
+        content = file.read()
+
+    content = content.replace("</body>", js_script + "\n</body>")
+
+    with open(file_path, "w", encoding="utf-8") as file:
+        file.write(content)
 
 
 def load_layout(args):
