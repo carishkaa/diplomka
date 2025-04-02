@@ -12,6 +12,7 @@ from collections import deque
 from datetime import datetime
 from typing import TypedDict
 import time
+import networkx as nx
 
 from pymoo.algorithms.soo.nonconvex.ga import GA
 from pymoo.core.problem import ElementwiseProblem
@@ -321,7 +322,7 @@ class RepairHoles(Repair):
 
 
 class ExpandedPlacementProblem(ElementwiseProblem):
-    def __init__(self, patients: list[set], n_tiles, sorted_names, drug_packing, n_interfaces, n_episodes, distances: np.ndarray, drug_dosing, **kwargs):
+    def __init__(self, patients: list[set], n_tiles, sorted_names, drug_packing, n_interfaces, n_episodes, distances: np.ndarray, drug_dosing, all_available_position_idxs, all_available_positions, **kwargs):
         self.n_tiles = n_tiles
         self.sorted_names = sorted_names
         self.n_interfaces = n_interfaces
@@ -344,6 +345,9 @@ class ExpandedPlacementProblem(ElementwiseProblem):
             self.reverse_drug_packing[drug_name] = self.compatible_dispenser_list(drug_name)
         # print('reverse_drug_packing', self.reverse_drug_packing)
 
+        self.all_available_position_idxs = all_available_position_idxs
+        self.all_available_positions = all_available_positions
+
         super().__init__(n_var=n_tiles+n_interfaces, n_obj=1, vtype=int, **kwargs)
 
     def compatible_dispenser_list(self, drug_name):
@@ -358,22 +362,25 @@ class ExpandedPlacementProblem(ElementwiseProblem):
     def _evaluate(self, x, out, *args, **kwargs):
         starttime = time.perf_counter() # TODO remove - tracks time of evaluation
 
-        processing_count = np.zeros(self.n_tiles+self.n_interfaces, dtype=int)
+        # processing_count = np.zeros(self.n_tiles+self.n_interfaces, dtype=int)
         processing_time = np.zeros(self.n_tiles+self.n_interfaces, dtype=int)
 
         interface_locations = x[:self.n_interfaces]
 
         # simulate patients
         total_distance_patients = 0
-        interface_start_idxs = np.random.choice(range(self.n_interfaces), self.n_episodes * len(self.patients)) # pregenerating, it saves time
+        simulation_paths = [] # to track all simulations paths for future interuptions calculation
+        interface_start_idxs = np.random.choice(range(self.n_interfaces), self.n_episodes * len(self.patients)) # pregenerating
 
         for idx_p, patient in enumerate(self.patients):
             for e in range(self.n_episodes):
+                simulation_paths.append([])
                 # Randomly select interface to start
                 interface_start_idx = interface_start_idxs[idx_p * self.n_episodes + e]
                 prev_loc = interface_locations[interface_start_idx]
-                processing_count[interface_start_idx] += 1
+                # processing_count[interface_start_idx] += 1
                 processing_time[interface_start_idx] += 1
+                simulation_paths[-1].append(prev_loc)
 
                 drugs_to_dispense = set(patient)
                 distance_for_patient = 0
@@ -398,8 +405,9 @@ class ExpandedPlacementProblem(ElementwiseProblem):
                     remaining_drugs = drugs_to_dispense & drugs_available_at_location       # aka intersection
                     assert len(remaining_drugs) > 0
                     current_drug = remaining_drugs.pop()
-                    processing_count[sampled_dispenser] += 1
-                    processing_time[sampled_dispenser] += drug_dosing[current_drug]
+                    # processing_count[sampled_dispenser] += 1
+                    processing_time[sampled_dispenser] += self.drug_dosing[current_drug]
+                    simulation_paths[-1].append(cur_loc)
                     drugs_to_dispense.remove(current_drug)
                     distance_for_patient += self.distances[prev_loc][cur_loc]
                     prev_loc = cur_loc
@@ -409,17 +417,100 @@ class ExpandedPlacementProblem(ElementwiseProblem):
                 interface_finish_idx = self.sample_from_pdf(distances_to_sites)
                 finish_interface_loc = interface_locations[interface_finish_idx]
                 distance_for_patient += self.distances[prev_loc][finish_interface_loc]
-                processing_count[interface_finish_idx] += 1
+                # processing_count[interface_finish_idx] += 1
                 processing_time[interface_finish_idx] += 1
+                simulation_paths[-1].append(finish_interface_loc)
 
                 total_distance_patients += distance_for_patient
 
         endtime = time.perf_counter()
         print(f"Time taken in ms: {(endtime - starttime) * 1000:.2f} ms")
         out["F"] = total_distance_patients/(self.n_episodes*len(self.patients))
-        out["processing_count"] = processing_count
-        out["processing_time"] = processing_time
-        # TODO constraints? (connected area)
+
+        out["F_expected_steps"] = total_distance_patients/(self.n_episodes*len(self.patients))
+        # out["processing_count"] = processing_count
+        out["processing_time"] = processing_time / self.n_episodes # avg processing time per episode
+
+        starttime = datetime.now()
+
+        # Dispensers with processing time > bound_processing_time are considered overprocessed
+        bound_processing_time = np.quantile(out["processing_time"], 0.7)
+
+        # Track all pairs of dispensers that were visited by patients
+        all_pairs = dict()
+        for simulation_patient_visited_locs in simulation_paths:
+            for i in range(1, len(simulation_patient_visited_locs)):
+                A = simulation_patient_visited_locs[i-1] # location id
+                B = simulation_patient_visited_locs[i]
+                if A == B:
+                    # The same location, skip. It can happen if we use multidispenser on the same tile 2 times.
+                    continue
+                dispenser_id_A = np.where(x == A)[0][0]
+                dispenser_id_B = np.where(x == B)[0][0]
+                if i == 1 or i == len(simulation_patient_visited_locs)-1 or out["processing_time"][dispenser_id_A] > bound_processing_time or out["processing_time"][dispenser_id_B] > bound_processing_time:
+                    pair = tuple(sorted((A, B)))  # Ensure (A, B) and (B, A) are the same
+                    if pair not in all_pairs:
+                        all_pairs[pair] = 0
+                    all_pairs[pair] += 1
+        simulation_paths = None # free memory
+
+        # Keep only valid locations (not empty, not overprocessed, not interface)
+        empty_locations = np.setdiff1d(self.all_available_position_idxs, x)
+        empty_loc_coords = [self.all_available_positions[loc] for loc in empty_locations]
+        overprocessing_locations = x[np.where(out["processing_time"] > bound_processing_time)[0]]
+        overprocessing_loc_coords = [self.all_available_positions[loc] for loc in overprocessing_locations]
+        interface_locations = x[:self.n_interfaces]
+        interface_loc_coords = [self.all_available_positions[loc] for loc in interface_locations]
+        valid_loc_coords = [loc for loc in self.all_available_positions if loc not in empty_loc_coords and loc not in overprocessing_loc_coords and loc not in interface_loc_coords]
+        G = create_grid_graph(valid_loc_coords)
+
+        try:
+            non_interrupted_pairs = 0 # we want to maximize this
+            for pair, pair_count in all_pairs.items():
+                A, B = pair
+                A_coord = self.all_available_positions[A]
+                B_coord = self.all_available_positions[B]
+
+                is_A_valid = A_coord in valid_loc_coords
+                is_B_valid = B_coord in valid_loc_coords
+
+                if not is_A_valid:
+                    G.add_node(A_coord)
+                    for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                        neighbor = (A_coord[0] + dx, A_coord[1] + dy)
+                        if neighbor in valid_loc_coords or neighbor == B_coord:
+                            G.add_edge(A_coord, neighbor)
+                            G.add_edge(neighbor, A_coord)
+
+                if not is_B_valid:
+                    G.add_node(B_coord)
+                    for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                        neighbor = (B_coord[0] + dx, B_coord[1] + dy)
+                        if neighbor in valid_loc_coords or neighbor == A_coord:
+                            G.add_edge(B_coord, neighbor)
+                            G.add_edge(neighbor, B_coord)
+
+                # Is there a path that does not go through empty/overprocessed locations and interfaces?
+                path_exists = nx.has_path(G, source=A_coord, target=B_coord)
+                if path_exists:
+                    non_interrupted_pairs += pair_count
+                if not is_A_valid:
+                    G.remove_node(A_coord)
+                if not is_B_valid:
+                    G.remove_node(B_coord)
+
+        except Exception as err:
+            print("Error in non_interrupted_pairs calculation", err)
+
+        total_pair_count = sum(all_pairs.values())
+        # percent_of_non_interrupted_pairs = non_interrupted_pairs / total_pair_count if total_pair_count > 0 else 0
+        interrupted_prejezdy = total_pair_count - non_interrupted_pairs # we want to minimize this
+        out["F_interruptions"] = interrupted_prejezdy
+
+        endtime = datetime.now()
+        print(f"Time taken in ms: {(endtime - starttime).microseconds / 1000}")
+
+        out["F"] += interrupted_prejezdy * 0.1
 
 class ObjValCallback(Callback):
     def __init__(self, n_patients=None, n_episodes=None) -> None:
@@ -474,6 +565,7 @@ def bfs_shortest_paths(start: tuple, available_machine_positions: list[tuple[int
                 queue.append((neighbor, dist + 1))
     return distances
 
+# TODO remove in favour of calculation through nx
 def compute_shortest_path_matrix(available_machine_positions: list[tuple[int, int]]):
     distance_matrix = np.full((len(available_machine_positions), len(available_machine_positions)), np.inf)
     
@@ -508,6 +600,18 @@ def assert_layout(layout: Layout, n_interfaces: int, n_tiles: int):
     duplicate_interfaces = [loc for loc in layout["interface_locations"] if layout["interface_locations"].count(loc) > 1]
     assert len(duplicate_interfaces) == 0, f"Duplicate interface locations: {duplicate_interfaces}. Check layout file."
 
+def create_grid_graph(valid_nodes: list[tuple[int, int]]):
+    G = nx.Graph()
+    for node in valid_nodes:
+        G.add_node(node)
+    directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+    for node in valid_nodes:
+        for di, dj in directions:
+            neighbor = (node[0] + di, node[1] + dj)
+            if neighbor in valid_nodes:
+                G.add_edge(node, neighbor)
+    return G
+
 def compute_placement(args, layout: Layout, patient_list, sorted_names, drug_packing, drug_dosing):
     n_episodes = args.episodes
     n_interfaces = args.interfaces
@@ -523,13 +627,14 @@ def compute_placement(args, layout: Layout, patient_list, sorted_names, drug_pac
     all_available_position_idxs = list(range(len(all_available_positions)))
     interface_position_idxs = [all_available_positions.index(loc) for loc in layout["interface_locations"]]
 
+    # Warning: we don't know here which cells will be empty, so this is not very accurate
     distances = compute_shortest_path_matrix(all_available_positions)
 
     pool = multiprocess.Pool(args.processes)
     runner = StarmapParallelization(pool.starmap)
     problem = ExpandedPlacementProblem(patient_list, n_tiles=n_tiles, distances=distances, sorted_names=sorted_names,
                                drug_packing=drug_packing, n_interfaces=n_interfaces, n_episodes=n_episodes,
-                               elementwise_runner=runner, drug_dosing=drug_dosing)
+                               elementwise_runner=runner, drug_dosing=drug_dosing, all_available_position_idxs=all_available_position_idxs, all_available_positions=all_available_positions)
 
     sampling = InterfaceTileSampling(n_interfaces, n_tiles, all_available_position_idxs, interface_position_idxs, all_available_positions, 
                                      percent_of_random_perm=1 if empty_location_counts > 0 else 0.5)
@@ -658,24 +763,24 @@ def save_placement(placement, best_obj, mean_obj, args, checkpoint=None):
               indent=4
     )
 
-def save_processing_count(placement, processing_count, processing_times, args):
+def save_processing_times_plot(placement, processing_count, processing_times, args):
     # store a picture with heatmap of processing counts for each machine and interface
     xs = range(len(placement[0]))
     ys = range(len(placement))
 
-    processing_counts_matrix = np.zeros((len(placement), len(placement[0])))
+    # processing_counts_matrix = np.zeros((len(placement), len(placement[0])))
     processing_times_matrix = np.zeros((len(placement), len(placement[0])))
     medicine_labels = get_medicine_labels(placement, args, drug_packing, xs, ys)
     for i in ys:
         for j in xs:
             if placement[i, j] == EMPTY_LOCATION:
-                processing_counts_matrix[i, j] = np.nan
+                # processing_counts_matrix[i, j] = np.nan
                 processing_times_matrix[i, j] = np.nan
             elif placement[i, j] == BLOCKED_LOCATION:
-                processing_counts_matrix[i, j] = np.nan
+                # processing_counts_matrix[i, j] = np.nan
                 processing_times_matrix[i, j] = np.nan
             else:
-                processing_counts_matrix[i, j] = processing_count[placement[i, j]]
+                # processing_counts_matrix[i, j] = processing_count[placement[i, j]]
                 processing_times_matrix[i, j] = processing_times[placement[i, j]]
 
     processing_times_text = processing_times_matrix.copy().astype(str)
@@ -689,14 +794,14 @@ def save_processing_count(placement, processing_count, processing_times, args):
                 processing_times_text[i, j] = "blocked"
     
 
-    fig = px.imshow(processing_counts_matrix, title="Processing count for each machine and interface in the solution",
-                    color_continuous_scale="Viridis", text_auto=True)
-    fig.update_layout(
-        xaxis = dict(tickmode = 'linear', tick0 = 0, dtick = 1, mirror=True, showline=True, linecolor='lightgray'),
-        yaxis = dict(tickmode = 'linear', tick0 = 0, dtick = 1, mirror=True, showline=True, linecolor='lightgray')
-    )
-    fig.update_traces(customdata=medicine_labels, hovertemplate='%{customdata}', xgap=0.1, ygap=0.1)
-    fig.write_html(os.path.join(args.output, "processing_count.html"))
+    # fig = px.imshow(processing_counts_matrix, title="Processing count for each machine and interface in the solution",
+    #                 color_continuous_scale="Viridis", text_auto=True)
+    # fig.update_layout(
+    #     xaxis = dict(tickmode = 'linear', tick0 = 0, dtick = 1, mirror=True, showline=True, linecolor='lightgray'),
+    #     yaxis = dict(tickmode = 'linear', tick0 = 0, dtick = 1, mirror=True, showline=True, linecolor='lightgray')
+    # )
+    # fig.update_traces(customdata=medicine_labels, hovertemplate='%{customdata}', xgap=0.1, ygap=0.1)
+    # fig.write_html(os.path.join(args.output, "processing_count.html"))
 
     fig_times = px.imshow(processing_times_matrix, title="Processing time for each machine and interface in the solution",
                     color_continuous_scale="Viridis", text_auto=True)
@@ -872,7 +977,7 @@ if __name__ == '__main__':
     # Plot init population
     # plot_init_pop(args, layout, drug_packing, res)
 
-    save_processing_count(placement, res.algorithm.callback.data["processing_count"][-1], res.algorithm.callback.data["processing_time"][-1], args)
+    save_processing_times_plot(placement, res.algorithm.callback.data["processing_count"][-1], res.algorithm.callback.data["processing_time"][-1], args)
 
     if args.checkpoints:
         solutions = res.algorithm.callback.data["solution"]
