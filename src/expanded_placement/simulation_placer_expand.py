@@ -11,6 +11,7 @@ import os
 from collections import deque
 from datetime import datetime
 from typing import TypedDict
+import time
 
 from pymoo.algorithms.soo.nonconvex.ga import GA
 from pymoo.core.problem import ElementwiseProblem
@@ -355,7 +356,7 @@ class ExpandedPlacementProblem(ElementwiseProblem):
         return random.choices(range(len(pdf)), weights=pdf)[0]
 
     def _evaluate(self, x, out, *args, **kwargs):
-        # starttime = datetime.now() # TODO remove - tracks time of evaluation
+        starttime = time.perf_counter() # TODO remove - tracks time of evaluation
 
         processing_count = np.zeros(self.n_tiles+self.n_interfaces, dtype=int)
         processing_time = np.zeros(self.n_tiles+self.n_interfaces, dtype=int)
@@ -413,8 +414,8 @@ class ExpandedPlacementProblem(ElementwiseProblem):
 
                 total_distance_patients += distance_for_patient
 
-        # endtime = datetime.now()
-        # print(f"Time taken in ms: {(endtime - starttime).microseconds / 1000}")
+        endtime = time.perf_counter()
+        print(f"Time taken in ms: {(endtime - starttime) * 1000:.2f} ms")
         out["F"] = total_distance_patients/(self.n_episodes*len(self.patients))
         out["processing_count"] = processing_count
         out["processing_time"] = processing_time
