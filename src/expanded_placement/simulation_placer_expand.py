@@ -1,3 +1,4 @@
+from itertools import islice
 import numpy as np
 import argparse
 import csv
@@ -10,6 +11,7 @@ import random
 import os
 from collections import deque
 from datetime import datetime
+import time
 from typing import TypedDict
 import time
 import networkx as nx
@@ -17,12 +19,15 @@ import networkx as nx
 from pymoo.algorithms.soo.nonconvex.ga import GA
 from pymoo.core.problem import ElementwiseProblem
 from pymoo.core.repair import Repair
-from pymoo.operators.sampling.rnd import PermutationRandomSampling, Sampling
-from pymoo.operators.crossover.ox import OrderCrossover, Crossover, ox, random_sequence
-from pymoo.operators.mutation.inversion import InversionMutation, Mutation, inversion_mutation
+from pymoo.operators.sampling.rnd import Sampling
+from pymoo.operators.crossover.ox import Crossover, ox, random_sequence
+from pymoo.operators.mutation.inversion import Mutation, inversion_mutation
 from pymoo.termination import get_termination
 from pymoo.optimize import minimize
 from pymoo.core.callback import Callback
+from pymoo.util.display.output import Output
+from pymoo.util.display.column import Column
+
 
 class InterfaceTileSampling(Sampling):
     def __init__(self, n_interfaces, n_tiles, all_machine_positions_idxs, all_interface_locations_idxs, all_available_positions: list[tuple[int, int]], percent_of_random_perm: float):
@@ -345,7 +350,6 @@ class ExpandedPlacementProblem(ElementwiseProblem):
             self.reverse_drug_packing[drug_name] = self.compatible_dispenser_list(drug_name)
         # print('reverse_drug_packing', self.reverse_drug_packing)
 
-        self.all_available_position_idxs = all_available_position_idxs
         self.all_available_positions = all_available_positions
 
         super().__init__(n_var=n_tiles+n_interfaces, n_obj=1, vtype=int, **kwargs)
@@ -360,7 +364,8 @@ class ExpandedPlacementProblem(ElementwiseProblem):
         return random.choices(range(len(pdf)), weights=pdf)[0]
 
     def _evaluate(self, x, out, *args, **kwargs):
-        starttime = time.perf_counter() # TODO remove - tracks time of evaluation
+        # starttime = time.perf_counter() # TODO remove - tracks time of evaluation
+        x_loc_to_idx_map = {val: idx for idx, val in enumerate(x)}
 
         # processing_count = np.zeros(self.n_tiles+self.n_interfaces, dtype=int)
         processing_time = np.zeros(self.n_tiles+self.n_interfaces, dtype=int)
@@ -369,18 +374,19 @@ class ExpandedPlacementProblem(ElementwiseProblem):
 
         # simulate patients
         total_distance_patients = 0
-        simulation_paths = [] # to track all simulations paths for future interuptions calculation
+
+        # to track all pairs of dispensers/interfaces that were visited by patients
+        simulation_pairs_count = np.zeros((len(x), len(x)), dtype=int)
+
         interface_start_idxs = np.random.choice(range(self.n_interfaces), self.n_episodes * len(self.patients)) # pregenerating
 
         for idx_p, patient in enumerate(self.patients):
             for e in range(self.n_episodes):
-                simulation_paths.append([])
                 # Randomly select interface to start
                 interface_start_idx = interface_start_idxs[idx_p * self.n_episodes + e]
                 prev_loc = interface_locations[interface_start_idx]
                 # processing_count[interface_start_idx] += 1
                 processing_time[interface_start_idx] += 1
-                simulation_paths[-1].append(prev_loc)
 
                 drugs_to_dispense = set(patient)
                 distance_for_patient = 0
@@ -397,7 +403,7 @@ class ExpandedPlacementProblem(ElementwiseProblem):
                     sampled_dispenser = compatible_dispensers[sampled_idx]
                     cur_loc = x[sampled_dispenser]
 
-                    assert x[sampled_dispenser] == compatible_locations[sampled_idx] # just checking that everything works, remove this assert later
+                    simulation_pairs_count[x_loc_to_idx_map[prev_loc]][x_loc_to_idx_map[cur_loc]] += 1
 
                     drugs_available_at_location: set = self.drug_packing[sampled_dispenser]
 
@@ -407,7 +413,6 @@ class ExpandedPlacementProblem(ElementwiseProblem):
                     current_drug = remaining_drugs.pop()
                     # processing_count[sampled_dispenser] += 1
                     processing_time[sampled_dispenser] += self.drug_dosing[current_drug]
-                    simulation_paths[-1].append(cur_loc)
                     drugs_to_dispense.remove(current_drug)
                     distance_for_patient += self.distances[prev_loc][cur_loc]
                     prev_loc = cur_loc
@@ -419,98 +424,112 @@ class ExpandedPlacementProblem(ElementwiseProblem):
                 distance_for_patient += self.distances[prev_loc][finish_interface_loc]
                 # processing_count[interface_finish_idx] += 1
                 processing_time[interface_finish_idx] += 1
-                simulation_paths[-1].append(finish_interface_loc)
+                simulation_pairs_count[x_loc_to_idx_map[prev_loc]][x_loc_to_idx_map[finish_interface_loc]] += 1
 
                 total_distance_patients += distance_for_patient
 
-        endtime = time.perf_counter()
-        print(f"Time taken in ms: {(endtime - starttime) * 1000:.2f} ms")
+        # Make simulation_pairs a triangle matrix by summing elements at (i, j) and (j, i)
+        for i in range(simulation_pairs_count.shape[0]):
+            for j in range(i + 1, simulation_pairs_count.shape[1]):
+                simulation_pairs_count[i, j] += simulation_pairs_count[j, i]
+                simulation_pairs_count[j, i] = 0
+
+        # endtime = time.perf_counter()
+        # print_debug(f"Time taken in ms: {(endtime - starttime) * 1000:.2f} ms")
         out["F"] = total_distance_patients/(self.n_episodes*len(self.patients))
+        # return
 
         out["F_expected_steps"] = total_distance_patients/(self.n_episodes*len(self.patients))
         # out["processing_count"] = processing_count
         out["processing_time"] = processing_time / self.n_episodes # avg processing time per episode
 
-        starttime = datetime.now()
+        # starttime = time.perf_counter()
 
         # Dispensers with processing time > bound_processing_time are considered overprocessed
-        bound_processing_time = np.quantile(out["processing_time"], 0.7)
+        bound_processing_time = np.quantile(out["processing_time"], 0.6)
 
-        # Track all pairs of dispensers that were visited by patients
+        # starttime_allpairs = time.perf_counter()
+        # Filter simulation_pairs to have only pairs that contains at least one interface OR at least one overprocessed dispenser
         all_pairs = dict()
-        for simulation_patient_visited_locs in simulation_paths:
-            for i in range(1, len(simulation_patient_visited_locs)):
-                A = simulation_patient_visited_locs[i-1] # location id
-                B = simulation_patient_visited_locs[i]
-                if A == B:
-                    # The same location, skip. It can happen if we use multidispenser on the same tile 2 times.
-                    continue
-                dispenser_id_A = np.where(x == A)[0][0]
-                dispenser_id_B = np.where(x == B)[0][0]
-                if i == 1 or i == len(simulation_patient_visited_locs)-1 or out["processing_time"][dispenser_id_A] > bound_processing_time or out["processing_time"][dispenser_id_B] > bound_processing_time:
-                    pair = tuple(sorted((A, B)))  # Ensure (A, B) and (B, A) are the same
-                    if pair not in all_pairs:
-                        all_pairs[pair] = 0
-                    all_pairs[pair] += 1
-        simulation_paths = None # free memory
+        for i in range(len(simulation_pairs_count)):
+            for j in range(i + 1, len(simulation_pairs_count)):
+                if simulation_pairs_count[i][j] > 0:
+                    if i < self.n_interfaces or j < self.n_interfaces or out["processing_time"][i] > bound_processing_time or out["processing_time"][j] > bound_processing_time:
+                        pair = tuple(sorted((x[i], x[j])))
+                        if pair not in all_pairs:
+                            all_pairs[pair] = 0
+                        all_pairs[pair] += simulation_pairs_count[i][j]
+        simulation_pairs_count = None
+        # endtime_allpairs = time.perf_counter()
+        # print_debug(f"Time taken in ms (allpairs): {(endtime_allpairs - starttime_allpairs) * 1000:.2f} ms")
 
+        # starttime_creategraph = time.perf_counter()
         # Keep only valid locations (not empty, not overprocessed, not interface)
-        empty_locations = np.setdiff1d(self.all_available_position_idxs, x)
-        empty_loc_coords = [self.all_available_positions[loc] for loc in empty_locations]
+        dispensers_loc_coords = [self.all_available_positions[loc] for loc in x[self.n_interfaces:]]
         overprocessing_locations = x[np.where(out["processing_time"] > bound_processing_time)[0]]
         overprocessing_loc_coords = [self.all_available_positions[loc] for loc in overprocessing_locations]
-        interface_locations = x[:self.n_interfaces]
-        interface_loc_coords = [self.all_available_positions[loc] for loc in interface_locations]
-        valid_loc_coords = [loc for loc in self.all_available_positions if loc not in empty_loc_coords and loc not in overprocessing_loc_coords and loc not in interface_loc_coords]
+        valid_loc_coords = [loc for loc in self.all_available_positions if loc in dispensers_loc_coords and loc not in overprocessing_loc_coords]
+        valid_loc_coords = set(valid_loc_coords)
         G = create_grid_graph(valid_loc_coords)
+        # endtime_creategraph = time.perf_counter()
+        # print_debug(f"Time taken in ms (creategraph): {(endtime_creategraph - starttime_creategraph) * 1000:.2f} ms")
 
-        try:
-            non_interrupted_pairs = 0 # we want to maximize this
-            for pair, pair_count in all_pairs.items():
-                A, B = pair
-                A_coord = self.all_available_positions[A]
-                B_coord = self.all_available_positions[B]
+        # starttime_checkpaths = time.perf_counter()
+        non_interrupted_pairs = 0 # we want to maximize this
+        for pair, pair_count in all_pairs.items():
+            A, B = pair
+            A_coord = self.all_available_positions[A]
+            B_coord = self.all_available_positions[B]
 
-                is_A_valid = A_coord in valid_loc_coords
-                is_B_valid = B_coord in valid_loc_coords
+            is_A_valid = A_coord in valid_loc_coords
+            is_B_valid = B_coord in valid_loc_coords
 
-                if not is_A_valid:
-                    G.add_node(A_coord)
-                    for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                        neighbor = (A_coord[0] + dx, A_coord[1] + dy)
-                        if neighbor in valid_loc_coords or neighbor == B_coord:
-                            G.add_edge(A_coord, neighbor)
-                            G.add_edge(neighbor, A_coord)
+            if not is_A_valid:
+                G.add_node(A_coord)
+                for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    neighbor = (A_coord[0] + dx, A_coord[1] + dy)
+                    if neighbor in valid_loc_coords or neighbor == B_coord:
+                        G.add_edge(A_coord, neighbor)
 
-                if not is_B_valid:
-                    G.add_node(B_coord)
-                    for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                        neighbor = (B_coord[0] + dx, B_coord[1] + dy)
-                        if neighbor in valid_loc_coords or neighbor == A_coord:
-                            G.add_edge(B_coord, neighbor)
-                            G.add_edge(neighbor, B_coord)
+            if not is_B_valid:
+                G.add_node(B_coord)
+                for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    neighbor = (B_coord[0] + dx, B_coord[1] + dy)
+                    if neighbor in valid_loc_coords or neighbor == A_coord:
+                        G.add_edge(B_coord, neighbor)
 
-                # Is there a path that does not go through empty/overprocessed locations and interfaces?
-                path_exists = nx.has_path(G, source=A_coord, target=B_coord)
-                if path_exists:
-                    non_interrupted_pairs += pair_count
-                if not is_A_valid:
-                    G.remove_node(A_coord)
-                if not is_B_valid:
-                    G.remove_node(B_coord)
-
-        except Exception as err:
-            print("Error in non_interrupted_pairs calculation", err)
+            # Is there a path that does not go through empty/overprocessed locations and interfaces?
+            len_without_overprocessed = shortest_path_len(G, A_coord, B_coord) # 20 ms
+            if len_without_overprocessed != -1:
+                non_interrupted_pairs += pair_count
+            if not is_A_valid:
+                G.remove_node(A_coord)
+            if not is_B_valid:
+                G.remove_node(B_coord)
+        # endtime_checkpaths = time.perf_counter()
+        # print_debug(f"Time taken in ms (checkpaths): {(endtime_checkpaths - starttime_checkpaths) * 1000:.2f} ms")
 
         total_pair_count = sum(all_pairs.values())
-        # percent_of_non_interrupted_pairs = non_interrupted_pairs / total_pair_count if total_pair_count > 0 else 0
-        interrupted_prejezdy = total_pair_count - non_interrupted_pairs # we want to minimize this
-        out["F_interruptions"] = interrupted_prejezdy
+        interrupted_pairs = total_pair_count - non_interrupted_pairs # we want to minimize this
+        out["F_interruptions"] = interrupted_pairs * 0.01
 
-        endtime = datetime.now()
-        print(f"Time taken in ms: {(endtime - starttime).microseconds / 1000}")
+        # endtime = time.perf_counter()
+        # print_debug(f"Time taken in ms: {(endtime - starttime) * 1000:.2f} ms")
 
-        out["F"] += interrupted_prejezdy * 0.1
+        out["F"] += interrupted_pairs * 0.01
+
+def shortest_path_len(G, source, target):
+    """ -1 if no path exists, otherwise returns length of the path """
+    try:
+        p = nx.bidirectional_shortest_path(G, source, target)
+        return len(p) - 1
+    except nx.NetworkXNoPath:
+        return -1
+
+print_debugy = True
+def print_debug(*args, **kwargs):
+    if print_debugy:
+        print(*args, **kwargs)
 
 class ObjValCallback(Callback):
     def __init__(self, n_patients=None, n_episodes=None) -> None:
@@ -540,6 +559,35 @@ class ObjValCallback(Callback):
         self.data["processing_count"].append(algorithm.pop.get("processing_count")[best_idx])
         self.data["processing_time"].append(algorithm.pop.get("processing_time")[best_idx])
         self.data["solution"].append(algorithm.pop.get("X")[best_idx])
+
+class MyOutput(Output):
+    def __init__(self):
+        super().__init__()
+        self.f_avg = Column("f_avg", width=13)
+        self.f_min = RoundedColumn("f_min", width=13, ndigits_round=5)
+        self.f_interruption = RoundedColumn("f_interruptions", width=15, ndigits_round=5)
+        self.F_expected_steps = RoundedColumn("f_expected_steps", width=15, ndigits_round=5)
+        self.columns += [self.f_avg, self.f_min, self.f_interruption, self.F_expected_steps]
+
+    def update(self, algorithm):
+        super().update(algorithm)
+        self.f_avg.set(round(algorithm.pop.get("F").mean(), 4))
+        argmin_idx = np.argmin(algorithm.pop.get("F"))
+        self.f_min.set(algorithm.pop.get("F")[argmin_idx][0])
+        self.f_interruption.set(round(algorithm.pop.get("F_interruptions")[argmin_idx], 3))
+        self.F_expected_steps.set(algorithm.pop.get("F_expected_steps")[argmin_idx])
+
+class RoundedColumn(Column):
+    def __init__(self, name, width=13, func=None, truncate=True, ndigits_round=4) -> None:
+        super().__init__(name, width=width, func=func, truncate=truncate)
+        self.ndigits_round = ndigits_round
+    def text(self):
+        value = self.value
+        if value is None:
+            value = "-"
+        value = round(value, self.ndigits_round) if isinstance(value, float) else value
+        text = str(value).rjust(self.width)
+        return text
 
 
 def get_neighbors(position, available_machine_positions: list[tuple[int, int]], directions=[(-1, 0), (1, 0), (0, -1), (0, 1)]) -> list[tuple[int, int]]:
@@ -656,6 +704,7 @@ def compute_placement(args, layout: Layout, patient_list, sorted_names, drug_pac
                    callback=ObjValCallback(n_patients=len(patient_list), n_episodes=n_episodes),
                    # seed=0,
                    verbose=True,
+                   output=MyOutput(),
                    elementwise_evaluation=True)
     pool.close()
 
