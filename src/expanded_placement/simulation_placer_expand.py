@@ -511,7 +511,7 @@ class ExpandedPlacementProblem(ElementwiseProblem):
 
         total_pair_count = sum(all_pairs.values())
         interrupted_pairs = total_pair_count - non_interrupted_pairs # we want to minimize this
-        out["F_interruptions"] = interrupted_pairs * 0.01
+        out["F_interruptions"] = interrupted_pairs * 0.0007
 
         # endtime = time.perf_counter()
         # print_debug(f"Time taken in ms: {(endtime - starttime) * 1000:.2f} ms")
