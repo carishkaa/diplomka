@@ -489,11 +489,10 @@ class ExpandedPlacementProblem(ElementwiseProblem):
                 G.remove_node(B_coord)
         # endtime_checkpaths = time.perf_counter()
         # print_debug(f"Time taken in ms (checkpaths): {(endtime_checkpaths - starttime_checkpaths) * 1000:.2f} ms")
-        out["F_interruptions"] = interrupted_pairs # expected number of interrupted prejezdu per patietn
+        out["F_interruptions"] = interrupted_pairs # expected number of interrupted prejezdu per patient
 
         # endtime = time.perf_counter()
         # print_debug(f"Time taken in ms: {(endtime - starttime) * 1000:.2f} ms")
-
         out["F"] += out["F_interruptions"]
 
 def shortest_path_len(G, source, target):
