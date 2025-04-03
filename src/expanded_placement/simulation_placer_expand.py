@@ -243,16 +243,12 @@ class RepairHoles(Repair):
 
     def is_hole(self, empty_loc, individual):
         x, y = self.all_available_positions[empty_loc]
-        present_neighbors = get_neighbors((x, y), [self.all_available_positions[i] for i in individual])
-        blocked_neighbors = get_neighbors((x, y), self.blocked_positions)
+        present_or_blocked_neighbors = get_neighbors((x, y), [self.all_available_positions[i] for i in individual] + self.blocked_positions)
         is_boundary = x == 0 or x == self.all_available_positions[-1][0] or y == 0 or y == self.all_available_positions[-1][1]
         is_corner = is_boundary and ((x == 0 and y == 0) or (x == 0 and y == self.all_available_positions[-1][1]) or (x == self.all_available_positions[-1][0] and y == 0) or (x == self.all_available_positions[-1][0] and y == self.all_available_positions[-1][1]))
-        if len(present_neighbors) == 4 \
-                or (len(present_neighbors) == 3 and is_boundary) \
-                or (len(present_neighbors) == 3 and len(blocked_neighbors) == 1) \
-                or (len(present_neighbors) == 2 and is_corner)\
-                or (len(present_neighbors) == 2 and is_boundary and len(blocked_neighbors) == 1)\
-                or (len(present_neighbors) == 2 and len(blocked_neighbors) == 2):
+        if len(present_or_blocked_neighbors) == 4 \
+                or (len(present_or_blocked_neighbors) == 3 and is_boundary) \
+                or (len(present_or_blocked_neighbors) == 2 and is_corner):
             return True
         return False
     
@@ -285,17 +281,18 @@ class RepairHoles(Repair):
         # if kwargs.get('algorithm').n_gen < 100:
         #     return X
        
-        for _, individual in enumerate(X):
+        for ind, individual in enumerate(X):
+            # Fill holes
             empty_locations = np.setdiff1d(self.all_avail_positions_idxs, individual)
             holes = []
             for empty_loc in empty_locations:
                 assert empty_loc not in individual # TODO remove, used for debugging
                 if self.is_hole(empty_loc, individual):
                     holes.append(empty_loc)
-            X[_, :] = self.repair_holes(individual, holes)
-            assert len(np.unique(X[_, :])) == len(X[_, :]), "Duplicates in individual after holes repair" # TODO remove?, used for debugging
+            individual = self.repair_holes(individual, holes)
+            assert len(np.unique(individual)) == len(individual), "Duplicates in individual after holes repair" # TODO remove?, used for debugging
 
-
+            # Move lonely dispensers
             empty_locations = np.setdiff1d(self.all_avail_positions_idxs, individual)
             lonely_dispensers = []
             for dispenser_id in range(self.n_interfaces, self.n_interfaces + self.n_tiles):
@@ -303,7 +300,6 @@ class RepairHoles(Repair):
                 present_neighbors = get_neighbors((x, y), [self.all_available_positions[i] for i in individual])
                 if len(present_neighbors) == 0:
                     lonely_dispensers.append(dispenser_id)
-
             empty_adjacent = [n for n in empty_locations if len(get_neighbors(self.all_available_positions[n], [self.all_available_positions[i] for i in individual])) > 0]
             dist_interface2emptyAdj = np.zeros((self.n_interfaces, len(empty_adjacent)))
             for i, interface in enumerate(individual[:self.n_interfaces]):
@@ -320,8 +316,8 @@ class RepairHoles(Repair):
                 dist_interface2emptyAdj = np.delete(dist_interface2emptyAdj, np.argmin(min_dist_interface2emptyAdj), axis=1)
                 min_dist_interface2emptyAdj = np.min(dist_interface2emptyAdj, axis=0)
 
-            X[_, :] = individual
-            assert len(np.unique(X[_, :])) == len(X[_, :]), "Duplicates in individual after loners repair"
+            X[ind, :] = individual
+            assert len(np.unique(X[ind, :])) == len(X[ind, :]), "Duplicates in individual after repair operator"
 
         return X
 
@@ -365,18 +361,14 @@ class ExpandedPlacementProblem(ElementwiseProblem):
 
     def _evaluate(self, x, out, *args, **kwargs):
         # starttime = time.perf_counter() # TODO remove - tracks time of evaluation
-        x_loc_to_idx_map = {val: idx for idx, val in enumerate(x)}
 
-        # processing_count = np.zeros(self.n_tiles+self.n_interfaces, dtype=int)
+        get_index_in_x = {loc_id: idx for idx, loc_id in enumerate(x)}
         processing_time = np.zeros(self.n_tiles+self.n_interfaces, dtype=int)
-
         interface_locations = x[:self.n_interfaces]
-
-        # simulate patients
         total_distance_patients = 0
 
         # to track all pairs of dispensers/interfaces that were visited by patients
-        simulation_pairs_count = np.zeros((len(x), len(x)), dtype=int)
+        simulation_pairs_visit_count = np.zeros((len(x), len(x)), dtype=float)
 
         interface_start_idxs = np.random.choice(range(self.n_interfaces), self.n_episodes * len(self.patients)) # pregenerating
 
@@ -385,7 +377,6 @@ class ExpandedPlacementProblem(ElementwiseProblem):
                 # Randomly select interface to start
                 interface_start_idx = interface_start_idxs[idx_p * self.n_episodes + e]
                 prev_loc = interface_locations[interface_start_idx]
-                # processing_count[interface_start_idx] += 1
                 processing_time[interface_start_idx] += 1
 
                 drugs_to_dispense = set(patient)
@@ -403,7 +394,7 @@ class ExpandedPlacementProblem(ElementwiseProblem):
                     sampled_dispenser = compatible_dispensers[sampled_idx]
                     cur_loc = x[sampled_dispenser]
 
-                    simulation_pairs_count[x_loc_to_idx_map[prev_loc]][x_loc_to_idx_map[cur_loc]] += 1
+                    simulation_pairs_visit_count[get_index_in_x[prev_loc]][get_index_in_x[cur_loc]] += 1
 
                     drugs_available_at_location: set = self.drug_packing[sampled_dispenser]
 
@@ -411,7 +402,6 @@ class ExpandedPlacementProblem(ElementwiseProblem):
                     remaining_drugs = drugs_to_dispense & drugs_available_at_location       # aka intersection
                     assert len(remaining_drugs) > 0
                     current_drug = remaining_drugs.pop()
-                    # processing_count[sampled_dispenser] += 1
                     processing_time[sampled_dispenser] += self.drug_dosing[current_drug]
                     drugs_to_dispense.remove(current_drug)
                     distance_for_patient += self.distances[prev_loc][cur_loc]
@@ -422,60 +412,51 @@ class ExpandedPlacementProblem(ElementwiseProblem):
                 interface_finish_idx = self.sample_from_pdf(distances_to_sites)
                 finish_interface_loc = interface_locations[interface_finish_idx]
                 distance_for_patient += self.distances[prev_loc][finish_interface_loc]
-                # processing_count[interface_finish_idx] += 1
                 processing_time[interface_finish_idx] += 1
-                simulation_pairs_count[x_loc_to_idx_map[prev_loc]][x_loc_to_idx_map[finish_interface_loc]] += 1
+                simulation_pairs_visit_count[get_index_in_x[prev_loc]][get_index_in_x[finish_interface_loc]] += 1
 
                 total_distance_patients += distance_for_patient
 
-        # Make simulation_pairs a triangle matrix by summing elements at (i, j) and (j, i)
-        for i in range(simulation_pairs_count.shape[0]):
-            for j in range(i + 1, simulation_pairs_count.shape[1]):
-                simulation_pairs_count[i, j] += simulation_pairs_count[j, i]
-                simulation_pairs_count[j, i] = 0
-
-        # endtime = time.perf_counter()
-        # print_debug(f"Time taken in ms: {(endtime - starttime) * 1000:.2f} ms")
-        out["F"] = total_distance_patients/(self.n_episodes*len(self.patients))
-        # return
-
         out["F_expected_steps"] = total_distance_patients/(self.n_episodes*len(self.patients))
-        # out["processing_count"] = processing_count
+        out["F"] = total_distance_patients/(self.n_episodes*len(self.patients))
         out["processing_time"] = processing_time / self.n_episodes # avg processing time per episode
 
-        # starttime = time.perf_counter()
 
+        # CONGESTION TERM - INTERRUPTIONS
+
+        # (A, B)+(B, A), and divide to obtain expected value per patient
+        for i in range(simulation_pairs_visit_count.shape[0]):
+            for j in range(i + 1, simulation_pairs_visit_count.shape[1]):
+                simulation_pairs_visit_count[i, j] += simulation_pairs_visit_count[j, i]
+                simulation_pairs_visit_count[i, j] = simulation_pairs_visit_count[i, j] / (self.n_episodes * len(self.patients))
+                simulation_pairs_visit_count[j, i] = 0
+
+        # starttime = time.perf_counter()
         # Dispensers with processing time > bound_processing_time are considered overprocessed
         bound_processing_time = np.quantile(out["processing_time"], 0.6)
 
-        # starttime_allpairs = time.perf_counter()
         # Filter simulation_pairs to have only pairs that contains at least one interface OR at least one overprocessed dispenser
         all_pairs = dict()
-        for i in range(len(simulation_pairs_count)):
-            for j in range(i + 1, len(simulation_pairs_count)):
-                if simulation_pairs_count[i][j] > 0:
+        for i in range(len(simulation_pairs_visit_count)):
+            for j in range(i + 1, len(simulation_pairs_visit_count)):
+                if simulation_pairs_visit_count[i][j] > 0:
                     if i < self.n_interfaces or j < self.n_interfaces or out["processing_time"][i] > bound_processing_time or out["processing_time"][j] > bound_processing_time:
                         pair = tuple(sorted((x[i], x[j])))
                         if pair not in all_pairs:
                             all_pairs[pair] = 0
-                        all_pairs[pair] += simulation_pairs_count[i][j]
-        simulation_pairs_count = None
-        # endtime_allpairs = time.perf_counter()
-        # print_debug(f"Time taken in ms (allpairs): {(endtime_allpairs - starttime_allpairs) * 1000:.2f} ms")
+                        all_pairs[pair] += simulation_pairs_visit_count[i][j]
+        simulation_pairs_visit_count = None
 
-        # starttime_creategraph = time.perf_counter()
-        # Keep only valid locations (not empty, not overprocessed, not interface)
+        # Keep only valid locations in graph (not empty, not overprocessed, not interface)
         dispensers_loc_coords = [self.all_available_positions[loc] for loc in x[self.n_interfaces:]]
         overprocessing_locations = x[np.where(out["processing_time"] > bound_processing_time)[0]]
         overprocessing_loc_coords = [self.all_available_positions[loc] for loc in overprocessing_locations]
         valid_loc_coords = [loc for loc in self.all_available_positions if loc in dispensers_loc_coords and loc not in overprocessing_loc_coords]
         valid_loc_coords = set(valid_loc_coords)
         G = create_grid_graph(valid_loc_coords)
-        # endtime_creategraph = time.perf_counter()
-        # print_debug(f"Time taken in ms (creategraph): {(endtime_creategraph - starttime_creategraph) * 1000:.2f} ms")
 
         # starttime_checkpaths = time.perf_counter()
-        non_interrupted_pairs = 0 # we want to maximize this
+        interrupted_pairs = 0 # minimize this
         for pair, pair_count in all_pairs.items():
             A, B = pair
             A_coord = self.all_available_positions[A]
@@ -500,23 +481,20 @@ class ExpandedPlacementProblem(ElementwiseProblem):
 
             # Is there a path that does not go through empty/overprocessed locations and interfaces?
             len_without_overprocessed = shortest_path_len(G, A_coord, B_coord) # 20 ms
-            if len_without_overprocessed != -1:
-                non_interrupted_pairs += pair_count
+            if len_without_overprocessed == -1:
+                interrupted_pairs += pair_count
             if not is_A_valid:
                 G.remove_node(A_coord)
             if not is_B_valid:
                 G.remove_node(B_coord)
         # endtime_checkpaths = time.perf_counter()
         # print_debug(f"Time taken in ms (checkpaths): {(endtime_checkpaths - starttime_checkpaths) * 1000:.2f} ms")
-
-        total_pair_count = sum(all_pairs.values())
-        interrupted_pairs = total_pair_count - non_interrupted_pairs # we want to minimize this
-        out["F_interruptions"] = interrupted_pairs * 0.0007
+        out["F_interruptions"] = interrupted_pairs # expected number of interrupted prejezdu per patietn
 
         # endtime = time.perf_counter()
         # print_debug(f"Time taken in ms: {(endtime - starttime) * 1000:.2f} ms")
 
-        out["F"] += interrupted_pairs * 0.01
+        out["F"] += out["F_interruptions"]
 
 def shortest_path_len(G, source, target):
     """ -1 if no path exists, otherwise returns length of the path """
@@ -540,6 +518,9 @@ class ObjValCallback(Callback):
         self.data["processing_time"] = []
         self.data["solution"] = []
 
+        self.data["expect_interruptions"] = []
+        self.data["expect_steps"] = []
+
         self.n_patients = n_patients
         self.n_episodes = n_episodes
         # self.data["initial_population"] = None
@@ -549,13 +530,14 @@ class ObjValCallback(Callback):
         # if self.data["initial_population"] is None:
         #     self.data["initial_population"] = algorithm.pop.get("X")
         #     self.data["initial_population_fitnesses"] = algorithm.pop.get("F")
+        best_idx = np.argmin(algorithm.pop.get("F"))
 
         self.data["best"].append(algorithm.pop.get("F").min())
         self.data["mean"].append(algorithm.pop.get("F").mean())
 
-        best_idx = np.argmin(algorithm.pop.get("F"))
-        min_idx = min(range(len(algorithm.pop.get("X"))), key=lambda idx: algorithm.pop.get("F")[idx]) # TODO remove
-        assert best_idx == min_idx
+        self.data["expect_interruptions"].append(algorithm.pop.get("F_interruptions")[best_idx])
+        self.data["expect_steps"].append(algorithm.pop.get("F_expected_steps")[best_idx])
+
         self.data["processing_count"].append(algorithm.pop.get("processing_count")[best_idx])
         self.data["processing_time"].append(algorithm.pop.get("processing_time")[best_idx])
         self.data["solution"].append(algorithm.pop.get("X")[best_idx])
@@ -754,7 +736,7 @@ def get_color_scale(placement_colors):
     medicines_colors = [[start_medicine_color + one_part * i, color_seq[i]] for i in range(len(color_seq))]
     return [[blocked_color, "black"], [empty_color, "white"]] + medicines_colors + [[1, color_seq[-1]]]
 
-def save_placement(placement, best_obj, mean_obj, args, checkpoint=None):
+def save_placement(placement, best_obj, mean_obj, expected_steps_obj, expected_interruptions_obj, args, checkpoint=None):
     drug_input = json.load(open(args.packing, "r"))
     drug_packing = drug_input["packing"]
     n_tiles = len(drug_packing.keys())
@@ -768,7 +750,7 @@ def save_placement(placement, best_obj, mean_obj, args, checkpoint=None):
     layout_string_for_filename = f"layout_{x[-1]+1}x{y[-1]+1}" # TODO maybe smth better to capture blocked and interface locations 
     if args.figs:        
         unique_id_by_date = datetime.now().strftime("%y%m%d%H%M")
-        fig = px.imshow(placement_colors, title=f"expected number of steps: {min(best_obj)}",
+        fig = px.imshow(placement_colors, title=f"fitness value: {min(best_obj)} (expected steps: {expected_steps_obj[best_obj.index(min(best_obj))]}, expected interruptions: {expected_interruptions_obj[best_obj.index(min(best_obj))]})",
                         color_continuous_scale=get_color_scale(placement_colors))
         fig.update_layout(
             xaxis = dict(tickmode = 'linear', tick0 = 0, dtick = 1, mirror=True, showline=True, linecolor='lightgray'),
@@ -780,7 +762,7 @@ def save_placement(placement, best_obj, mean_obj, args, checkpoint=None):
         else:
             fig.write_html(os.path.join(args.output, f"{layout_string_for_filename}_{y[-1]+1}_ntiles_{n_tiles}_ninterfaces_{args.interfaces}_nevals_{args.evals}_placer_simulation_{unique_id_by_date}.html"))
 
-        fig_convergence = px.line(pd.DataFrame({"best": best_obj, "mean": mean_obj}), labels=dict(x="generation [-]", y="expected step count [-]"))
+        fig_convergence = px.line(pd.DataFrame({"best": best_obj, "mean": mean_obj, "expected steps": expected_steps_obj, "expected interruptions": expected_interruptions_obj}), labels=dict(x="generation [-]", y="fitness value [-]"))
         if checkpoint is not None:
             fig_convergence.write_html(os.path.join(args.output, f"{layout_string_for_filename}_ntiles_{n_tiles}_ninterfaces_{args.interfaces}_nevals_{args.evals}_convergence_plot_checkpoints_{checkpoint}_{unique_id_by_date}.html"))
         else:
@@ -793,7 +775,7 @@ def save_placement(placement, best_obj, mean_obj, args, checkpoint=None):
         "n_episodes": args.episodes,
         "n_evals": args.evals,
         "n_popsize": args.pop_size,
-        "obj_progress": {"mean": mean_obj, "best": best_obj},
+        "obj_progress": {"mean": mean_obj, "best": best_obj, "expected_interruptions": expected_interruptions_obj, "expected_steps": expected_steps_obj},
         "obj": min(best_obj),
         "placement": medicine_labels,
         "packer_result": drug_packing,
@@ -830,7 +812,7 @@ def save_processing_times_plot(placement, processing_count, processing_times, ar
                 processing_times_matrix[i, j] = np.nan
             else:
                 # processing_counts_matrix[i, j] = processing_count[placement[i, j]]
-                processing_times_matrix[i, j] = processing_times[placement[i, j]]
+                processing_times_matrix[i, j] = round(processing_times[placement[i, j]], 2)
 
     processing_times_text = processing_times_matrix.copy().astype(str)
     for i in range(len(medicine_labels)):
@@ -1028,19 +1010,22 @@ if __name__ == '__main__':
 
     save_processing_times_plot(placement, res.algorithm.callback.data["processing_count"][-1], res.algorithm.callback.data["processing_time"][-1], args)
 
+
+    best_obj = res.algorithm.callback.data["best"]
+    mean_obj = res.algorithm.callback.data["mean"]
+    # Different terms of the objective function
+    expect_steps_obj = res.algorithm.callback.data["expect_steps"]
+    expect_interruptions_obj = res.algorithm.callback.data["expect_interruptions"]
     if args.checkpoints:
         solutions = res.algorithm.callback.data["solution"]
-        best_obj = res.algorithm.callback.data["best"]
-        mean_obj = res.algorithm.callback.data["mean"]
-
         first_solution = format_placement(solutions[0], layout, n_tiles, args.interfaces)
-        save_placement(first_solution, [best_obj[0]], [mean_obj[0]], args, checkpoint=0)
+        save_placement(first_solution, [best_obj[0]], [mean_obj[0]], [expect_steps_obj[0]], [expect_interruptions_obj[0]], args, checkpoint=0)
         prev_obj = best_obj[0]
 
         for sol_id in range(1, len(best_obj)):
             if best_obj[sol_id] < prev_obj:
                 placement = format_placement(solutions[sol_id], layout, n_tiles, args.interfaces)
-                save_placement(placement, best_obj[0:(sol_id+1)], mean_obj[0:(sol_id+1)], args, checkpoint=sol_id)
+                save_placement(placement, best_obj[0:(sol_id+1)], mean_obj[0:(sol_id+1)], expect_steps_obj[0:(sol_id+1)], expect_interruptions_obj[0:(sol_id+1)], args, checkpoint=sol_id)
                 prev_obj = best_obj[sol_id]
     else:
-        save_placement(placement, res.algorithm.callback.data["best"], res.algorithm.callback.data["mean"], args)
+        save_placement(placement, best_obj, mean_obj, expect_steps_obj, expect_interruptions_obj, args)
