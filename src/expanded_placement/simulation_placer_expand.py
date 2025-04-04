@@ -489,11 +489,27 @@ class ExpandedPlacementProblem(ElementwiseProblem):
                 G.remove_node(B_coord)
         # endtime_checkpaths = time.perf_counter()
         # print_debug(f"Time taken in ms (checkpaths): {(endtime_checkpaths - starttime_checkpaths) * 1000:.2f} ms")
-        out["F_interruptions"] = interrupted_pairs # expected number of interrupted prejezdu per patient
-
+        out["F_interruptions"] = interrupted_pairs # expected number of interrupted prejezdu per patietn
+        out["F"] += out["F_interruptions"]
         # endtime = time.perf_counter()
         # print_debug(f"Time taken in ms: {(endtime - starttime) * 1000:.2f} ms")
-        out["F"] += out["F_interruptions"]
+
+        # CONGESTION TERM - PROCESSING BALANCE
+        # max_processing_time = np.max(out["processing_time"])
+
+        # Find groups of dispensers of same type (not multiple) and store their processing times 
+        processing_times_diff = [] # difference max-avg through this group
+        for drug_name, locations in self.reverse_drug_packing.items():
+            if len(locations) > 1:
+                mean = np.mean(out["processing_time"][locations])
+                maximum = np.max(out["processing_time"][locations])
+                processing_times_diff.append((mean, maximum - mean))
+        processing_times_diff.sort(key=lambda x: x[0], reverse=True)
+        processing_times_diff = [diff for _, diff in processing_times_diff]
+        
+        out["F_max_processing_time"] = sum(processing_times_diff[:4]) * 0.01 # max_processing_time * 0.01
+        out["F"] += out["F_max_processing_time"]
+
 
 def shortest_path_len(G, source, target):
     """ -1 if no path exists, otherwise returns length of the path """
@@ -548,7 +564,8 @@ class MyOutput(Output):
         self.f_min = RoundedColumn("f_min", width=13, ndigits_round=5)
         self.f_interruption = RoundedColumn("f_interruptions", width=15, ndigits_round=5)
         self.F_expected_steps = RoundedColumn("f_expected_steps", width=15, ndigits_round=5)
-        self.columns += [self.f_avg, self.f_min, self.f_interruption, self.F_expected_steps]
+        self.F_max_processing_times = RoundedColumn("F_max_processing_time", width=15, ndigits_round=5)
+        self.columns += [self.f_avg, self.f_min, self.f_interruption, self.F_expected_steps, self.F_max_processing_times]
 
     def update(self, algorithm):
         super().update(algorithm)
@@ -557,6 +574,7 @@ class MyOutput(Output):
         self.f_min.set(algorithm.pop.get("F")[argmin_idx][0])
         self.f_interruption.set(round(algorithm.pop.get("F_interruptions")[argmin_idx], 3))
         self.F_expected_steps.set(algorithm.pop.get("F_expected_steps")[argmin_idx])
+        self.F_max_processing_times.set(algorithm.pop.get("F_max_processing_time")[argmin_idx])
 
 class RoundedColumn(Column):
     def __init__(self, name, width=13, func=None, truncate=True, ndigits_round=4) -> None:
