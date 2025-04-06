@@ -177,7 +177,15 @@ class MachinesMutation(Mutation):
             # Inverse sequence
             if np.random.random() < 0.7:
                 seq = random_sequence(self.n_tiles)
-                Y[i, self.n_interfaces:] = inversion_mutation(y[self.n_interfaces:], seq, inplace=True)
+                tiles = y[self.n_interfaces:].copy()
+
+                sorted_indices = np.argsort(tiles)
+                reverse_mapping = np.argsort(sorted_indices)
+
+                mutated_indices = inversion_mutation(sorted_indices, seq, inplace=True)
+                mutated_tiles = tiles[reverse_mapping[mutated_indices]]
+
+                Y[i, self.n_interfaces:] = mutated_tiles
                 assert len(np.unique(Y[i])) == len(Y[i])
             
             swap_proba = 0.3 if current_gen < 100 else 0.9
@@ -490,6 +498,7 @@ class ExpandedPlacementProblem(ElementwiseProblem):
         # endtime_checkpaths = time.perf_counter()
         # print_debug(f"Time taken in ms (checkpaths): {(endtime_checkpaths - starttime_checkpaths) * 1000:.2f} ms")
         out["F_interruptions"] = interrupted_pairs # expected number of interrupted prejezdu per patietn
+        # TODO: maybe if <0.5 just keep 0.5 so that it can focus more on expected steps optimization
         out["F"] += out["F_interruptions"]
         # endtime = time.perf_counter()
         # print_debug(f"Time taken in ms: {(endtime - starttime) * 1000:.2f} ms")
@@ -742,7 +751,7 @@ def get_placement_colors(drug_packing, x, y, medicine_labels):
 
 def get_color_scale(placement_colors):
     max_color_ratio = np.nanmax(placement_colors.flatten())
-    min_color_ratio = np.nanmin(placement_colors.flatten())
+    min_color_ratio = np.min([np.nanmin(placement_colors.flatten()), BLOCKED_LOCATION])
     def normalize_color(location_idx):
         return (location_idx - min_color_ratio) / (max_color_ratio - min_color_ratio)
     blocked_color = normalize_color(BLOCKED_LOCATION)
