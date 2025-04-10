@@ -94,8 +94,8 @@ class SeparateOrderCrossover(Crossover):
         self.shift = shift
         self.n_interfaces = n_interfaces
         self.n_tiles = n_tiles
-        self.all_machine_positions_idxs = all_machine_positions_idxs
-        self.all_interface_locations_idxs = all_interface_locations_idxs
+        self.all_avail_positions_ids = all_machine_positions_idxs
+        self.all_interface_locations_ids = all_interface_locations_idxs
 
     def _do(self, problem, X, **kwargs):
         _, n_matings, n_var = X.shape
@@ -106,6 +106,8 @@ class SeparateOrderCrossover(Crossover):
         for i in range(n_matings):
             parent_a, parent_b = X[:, i, :]
 
+            # TODO remake the chromosome
+            # SEPARATALY interfaces and machines
             # Crossover for interfaces TODO maybe for interfaces we don't need order crossover, better try smth else?
             start, end = random_sequence(self.n_interfaces)
             interfaces_a = ox(parent_a[:self.n_interfaces], parent_b[:self.n_interfaces], seq=(start, end), shift=self.shift)
@@ -116,6 +118,28 @@ class SeparateOrderCrossover(Crossover):
             tiles_a = ox(parent_a[self.n_interfaces:], parent_b[self.n_interfaces:], seq=(start, end), shift=self.shift)
             tiles_b = ox(parent_a[self.n_interfaces:], parent_b[self.n_interfaces:], seq=(start, end), shift=self.shift)
 
+            # 1 2 3 4 | 5 6 7 8 9
+            # 4 1 2 5 | 3 9 10 8 3
+
+            #     3 4 | 5 6
+            # Together everything 
+            # receiver, donor = parent_a, parent_b
+            # start, end = random_sequence(self.n_tiles + self.n_interfaces)
+
+            # donation = np.copy(donor[start:end + 1])
+            # donation_as_set = set(donation)
+            # y = []
+            # for k in range(len(receiver)):
+            #     # do the shift starting from the swapped sequence - as proposed in the paper
+            #     i = k if not self.shift else (start + k) % len(receiver)
+            #     v = receiver[i]
+            #     if v not in donation_as_set:
+            #         y.append(v)
+            # y_all_possible_interfaces = set(self.all_interface_locations_ids) & set(y)
+            # y = np.concatenate([y[:start], donation, y[start:]]).astype(copy=False, dtype=int)
+            # child_interfaces = y[:self.n_interfaces]
+            # child_tiles = y[self.n_interfaces:]
+
             # Check if there are duplicates
             def repair_duplicates(interfaces, tiles):
                 duplicated = set(interfaces) & set(tiles)
@@ -125,8 +149,8 @@ class SeparateOrderCrossover(Crossover):
                     elif len(tiles) > self.n_tiles:
                         tiles = np.delete(tiles, np.where(tiles == d))
                     else:
-                        random_empty_location = np.random.choice(np.setdiff1d(self.all_machine_positions_idxs, np.concatenate([interfaces, tiles])), 1)
-                        if random_empty_location in self.all_interface_locations_idxs:
+                        random_empty_location = np.random.choice(np.setdiff1d(self.all_avail_positions_ids, np.concatenate([interfaces, tiles])), 1)
+                        if random_empty_location in self.all_interface_locations_ids:
                             index = np.where(interfaces == d)
                             interfaces[index] = random_empty_location
                         else:
@@ -462,39 +486,51 @@ class ExpandedPlacementProblem(ElementwiseProblem):
         valid_loc_coords = [loc for loc in self.all_available_positions if loc in dispensers_loc_coords and loc not in overprocessing_loc_coords]
         valid_loc_coords = set(valid_loc_coords)
         G = create_grid_graph(valid_loc_coords)
+        G_all_dispensers = create_grid_graph(dispensers_loc_coords)
+
 
         # starttime_checkpaths = time.perf_counter()
         interrupted_pairs = 0 # minimize this
         for pair, pair_count in all_pairs.items():
-            A, B = pair
+            A, B = pair # A, B are location ids
             A_coord = self.all_available_positions[A]
             B_coord = self.all_available_positions[B]
 
             is_A_valid = A_coord in valid_loc_coords
             is_B_valid = B_coord in valid_loc_coords
+            is_A_dispenser = A in x[self.n_interfaces:]
+            is_B_dispenser = B in x[self.n_interfaces:]
 
             if not is_A_valid:
-                G.add_node(A_coord)
-                for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                    neighbor = (A_coord[0] + dx, A_coord[1] + dy)
-                    if neighbor in valid_loc_coords or neighbor == B_coord:
-                        G.add_edge(A_coord, neighbor)
+                G = self.add_nodes_to_graph(valid_loc_coords, G, A_coord, B_coord)
+            if not is_A_dispenser:
+                G_all_dispensers = self.add_nodes_to_graph(dispensers_loc_coords, G_all_dispensers, A_coord, B_coord)
 
             if not is_B_valid:
-                G.add_node(B_coord)
-                for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                    neighbor = (B_coord[0] + dx, B_coord[1] + dy)
-                    if neighbor in valid_loc_coords or neighbor == A_coord:
-                        G.add_edge(B_coord, neighbor)
+                G = self.add_nodes_to_graph(valid_loc_coords, G, B_coord, A_coord)
+            if not is_B_dispenser:
+                G_all_dispensers = self.add_nodes_to_graph(dispensers_loc_coords, G_all_dispensers, B_coord, A_coord)
 
             # Is there a path that does not go through empty/overprocessed locations and interfaces?
             len_without_overprocessed = shortest_path_len(G, A_coord, B_coord) # 20 ms
+
             if len_without_overprocessed == -1:
                 interrupted_pairs += pair_count
+            else: 
+                len_with_overprocessed = shortest_path_len(G_all_dispensers, A_coord, B_coord)
+                
+                if len_with_overprocessed < len_without_overprocessed:
+                    interrupted_pairs += pair_count
+                    print("There is a path that goes through empty/overprocessed locations and interfaces, but it's longer than the shortest one.")
+
             if not is_A_valid:
                 G.remove_node(A_coord)
+            if not is_A_dispenser:
+                G_all_dispensers.remove_node(A_coord)
             if not is_B_valid:
                 G.remove_node(B_coord)
+            if not is_B_dispenser:
+                G_all_dispensers.remove_node(B_coord)
         # endtime_checkpaths = time.perf_counter()
         # print_debug(f"Time taken in ms (checkpaths): {(endtime_checkpaths - starttime_checkpaths) * 1000:.2f} ms")
         out["F_interruptions"] = interrupted_pairs # expected number of interrupted prejezdu per patietn
@@ -518,6 +554,14 @@ class ExpandedPlacementProblem(ElementwiseProblem):
         
         out["F_max_processing_time"] = sum(processing_times_diff[:4]) * 0.01 # max_processing_time * 0.01
         out["F"] += out["F_max_processing_time"]
+
+    def add_nodes_to_graph(self, valid_loc_coords, graph: nx.Graph, new_node_coord: tuple, target_node_coord):
+        graph.add_node(new_node_coord)
+        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            neighbor = (new_node_coord[0] + dx, new_node_coord[1] + dy)
+            if neighbor in valid_loc_coords or neighbor == target_node_coord:
+                graph.add_edge(new_node_coord, neighbor)
+        return graph
 
 
 def shortest_path_len(G, source, target):
