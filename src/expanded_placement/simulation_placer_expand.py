@@ -518,7 +518,7 @@ class ExpandedPlacementProblem(ElementwiseProblem):
                 interrupted_pairs += pair_count
             else: 
                 len_with_overprocessed = shortest_path_len(G_all_dispensers, A_coord, B_coord)
-                
+
                 if len_with_overprocessed < len_without_overprocessed:
                     interrupted_pairs += pair_count
                     print("There is a path that goes through empty/overprocessed locations and interfaces, but it's longer than the shortest one.")
@@ -1045,6 +1045,7 @@ if __name__ == '__main__':
     parser.add_argument("-l", "--layout", help="json file with layout info: n, m, unavailable locations, interface locations", type=str) 
     parser.add_argument("-i", "--interfaces", help="number of interface locations", type=int, default=2)
     parser.add_argument("-o", "--output", help="output directory for placement", type=str, default="")
+    # todo add ratios of different fitness, percent of overprocessed
     parser.add_argument("--evals", help="maximum number of evaluations", type=int, default=30000)
     parser.add_argument("--pop-size", help="size of population", type=int, default=100)
     parser.add_argument("--episodes", help="number of simulation episodes per patient", type=int, default=5)

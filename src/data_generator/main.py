@@ -11,7 +11,7 @@ def is_pos_def(x):
     return np.all(np.linalg.eigvals(x) >= 0)
 
 # https://research.wu.ac.at/ws/portalfiles/portal/18952613/document.pdf
-def generate_multivariate_binary(num_vars, num_samples, marginal_probs, corr_matrix, threshold_drugs_per_sample: tuple=None):
+def generate_multivariate_binary(num_vars, num_samples, marginal_probs, corr_matrix, threshold_drugs_per_sample: tuple=None, weights=None):
     if len(marginal_probs) != num_vars:
         raise ValueError("Number of variables does not match the length of the means vector.")
 
@@ -34,7 +34,10 @@ def generate_multivariate_binary(num_vars, num_samples, marginal_probs, corr_mat
 
     # Convert to binary by choosing top k drugs per sample.
     min_drugs_per_sample, max_drugs_per_sample = threshold_drugs_per_sample
-    drugs_per_sample = np.random.choice(range(min_drugs_per_sample, max_drugs_per_sample + 1), size=num_samples) # TODO maybe not uniformly?
+    if weights is None:
+        weights = [1] * (max_drugs_per_sample - min_drugs_per_sample + 1)  # Default to uniform weights
+    norm_weights = weights / np.sum(weights)
+    drugs_per_sample = np.random.choice(range(min_drugs_per_sample, max_drugs_per_sample + 1), size=num_samples, p=norm_weights)
     sample_binary = np.zeros_like(sample_norm)
     for i in range(num_samples):
         indices = np.argpartition(sample_norm[i], -drugs_per_sample[i])[-drugs_per_sample[i]:]
@@ -86,8 +89,8 @@ def load_dosages():
     dosages['Average units [pcs]'] = (dosages['MIN units [pcs]'] + dosages['MAX units [pcs]']) / 2
     return dosages
 
-def generator(num_vars, num_samples, marginals, corr_matrix, cnames, dosages, threshold_drugs_per_sample):
-    sample, _ = generate_multivariate_binary(num_vars, num_samples, marginals, corr_matrix, threshold_drugs_per_sample)
+def generator(num_vars, num_samples, marginals, corr_matrix, cnames, dosages, threshold_drugs_per_sample, weights=None):
+    sample, _ = generate_multivariate_binary(num_vars, num_samples, marginals, corr_matrix, threshold_drugs_per_sample, weights)
     capsules = binary2capsules(sample, cnames)
     capsules['SEQN'] = capsules.index
     capsules['dosages'] = capsules.apply(lambda x: generate_dosages(x['drug_names'], dosages), axis=1)
@@ -95,13 +98,13 @@ def generator(num_vars, num_samples, marginals, corr_matrix, cnames, dosages, th
     res_capsules = capsules[['SEQN', 'drug_names', 'dosages']]
     return res_capsules
 
-def main(num_vars, num_samples, marginals_filename, corr_matrix_filename, sorted_names_filename, output_filename, threshold_drugs_per_sample):
+def main(num_vars, num_samples, marginals_filename, corr_matrix_filename, sorted_names_filename, output_filename, threshold_drugs_per_sample, weights=None):
     means = np.loadtxt(marginals_filename, delimiter=",")
     corr_matrix = np.loadtxt(corr_matrix_filename, delimiter=",")
     dosages = load_dosages()
     drug_names = pd.read_csv(sorted_names_filename, header=None)[0].to_list()
 
-    df = generator(num_vars, num_samples, means, corr_matrix, drug_names, dosages, threshold_drugs_per_sample)
+    df = generator(num_vars, num_samples, means, corr_matrix, drug_names, dosages, threshold_drugs_per_sample, weights)
     df.to_csv(output_filename, sep=';', index=False)
     return df
 
@@ -114,11 +117,19 @@ if __name__ == "__main__":
     parser.add_argument("-c", "--corr-matrix", type=argparse.FileType('r'), help="CSV file containing the correlation matrix of the drugs", metavar=('CORR_MATRIX_FILE'), required=True)
     parser.add_argument("-s", "--sorted-names", type=argparse.FileType('r'), help="CSV file containing the drug names in the same order as marginals and correlation matrix", metavar=('SORTED_NAMES_FILE'))
     parser.add_argument("-d", "--drugs-per-sample", type=int, nargs=2, metavar=('MIN', 'MAX'), help="Minimum and maximum number of drugs per sample. If not provided, it will not be limited and vary naturally.")
+    parser.add_argument("-w", "--weights", type=float, nargs='+', help="Weights for the number of drugs per sample", metavar=('WEIGHTS'))
     parser.add_argument("-o", "--output", type=str, help="Output file name", default='generated_capsules_with_dosages.csv', metavar=('OUTPUT_FILE'))
 
     args = parser.parse_args()
 
     with warnings.catch_warnings(record=True) as recorded_warnings:
-        main(args.num_vars, args.num_samples, args.marginal_probas, args.corr_matrix, args.sorted_names, args.output, args.drugs_per_sample)
+        weights = args.weights if args.weights else None
+        if args.drugs_per_sample:
+            min_drugs, max_drugs = args.drugs_per_sample
+            assert min_drugs < max_drugs, "Minimum number of drugs must be less than maximum number of drugs."
+            if weights and len(weights) != (max_drugs - min_drugs + 1):
+                raise ValueError("Number of weights must be equal to max-min+1, where minimum and maximum number of drugs per sample from '--drugs-per-sample' argument.")
+        
+        main(args.num_vars, args.num_samples, args.marginal_probas, args.corr_matrix, args.sorted_names, args.output, args.drugs_per_sample, weights)
 
     print("Generated successfully and saved to \"" + args.output + "\".")
