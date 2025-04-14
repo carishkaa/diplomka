@@ -518,10 +518,9 @@ class ExpandedPlacementProblem(ElementwiseProblem):
                 interrupted_pairs += pair_count
             else: 
                 len_with_overprocessed = shortest_path_len(G_all_dispensers, A_coord, B_coord)
-
                 if len_with_overprocessed < len_without_overprocessed:
                     interrupted_pairs += pair_count
-                    print("There is a path that goes through empty/overprocessed locations and interfaces, but it's longer than the shortest one.")
+                    # print("There is a path that goes through empty/overprocessed locations and interfaces, but it's longer than the shortest one", len_without_overprocessed-len_with_overprocessed)
 
             if not is_A_valid:
                 G.remove_node(A_coord)
@@ -553,7 +552,7 @@ class ExpandedPlacementProblem(ElementwiseProblem):
         processing_times_diff = [diff for _, diff in processing_times_diff]
         
         out["F_max_processing_time"] = sum(processing_times_diff[:4]) * 0.01 # max_processing_time * 0.01
-        out["F"] += out["F_max_processing_time"]
+        # out["F"] += out["F_max_processing_time"]
 
     def add_nodes_to_graph(self, valid_loc_coords, graph: nx.Graph, new_node_coord: tuple, target_node_coord):
         graph.add_node(new_node_coord)
