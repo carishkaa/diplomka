@@ -109,36 +109,28 @@ class SeparateOrderCrossover(Crossover):
             # TODO remake the chromosome
             # SEPARATALY interfaces and machines
             # Crossover for interfaces TODO maybe for interfaces we don't need order crossover, better try smth else?
-            start, end = random_sequence(self.n_interfaces)
-            interfaces_a = ox(parent_a[:self.n_interfaces], parent_b[:self.n_interfaces], seq=(start, end), shift=self.shift)
-            interfaces_b = ox(parent_b[:self.n_interfaces], parent_a[:self.n_interfaces], seq=(start, end), shift=self.shift)
+            # start, end = random_sequence(self.n_interfaces)
+            # interfaces_a = ox(parent_a[:self.n_interfaces], parent_b[:self.n_interfaces], seq=(start, end), shift=self.shift)
+            # interfaces_b = ox(parent_b[:self.n_interfaces], parent_a[:self.n_interfaces], seq=(start, end), shift=self.shift)
 
-            # Crossover for tiles
-            start, end = random_sequence(self.n_tiles)
-            tiles_a = ox(parent_a[self.n_interfaces:], parent_b[self.n_interfaces:], seq=(start, end), shift=self.shift)
-            tiles_b = ox(parent_a[self.n_interfaces:], parent_b[self.n_interfaces:], seq=(start, end), shift=self.shift)
+            # # Crossover for tiles
+            # start, end = random_sequence(self.n_tiles)
+            # tiles_a = ox(parent_a[self.n_interfaces:], parent_b[self.n_interfaces:], seq=(start, end), shift=self.shift)
+            # tiles_b = ox(parent_a[self.n_interfaces:], parent_b[self.n_interfaces:], seq=(start, end), shift=self.shift)
 
-            # 1 2 3 4 | 5 6 7 8 9
-            # 4 1 2 5 | 3 9 10 8 3
 
-            #     3 4 | 5 6
             # Together everything 
-            # receiver, donor = parent_a, parent_b
-            # start, end = random_sequence(self.n_tiles + self.n_interfaces)
+            offspring_a = self.order_crossover_with_repair(parent_a, parent_b)
+            assert len(offspring_a) == len(parent_a) == len(parent_b)
+            assert len(np.unique(offspring_a)) == len(offspring_a), "Duplicates in offspring A"
+            
+            offspring_b = self.order_crossover_with_repair(parent_b, parent_a)
+            assert len(offspring_b) == len(parent_a) == len(parent_b)
+            assert len(np.unique(offspring_b)) == len(offspring_b), "Duplicates in offspring B"
 
-            # donation = np.copy(donor[start:end + 1])
-            # donation_as_set = set(donation)
-            # y = []
-            # for k in range(len(receiver)):
-            #     # do the shift starting from the swapped sequence - as proposed in the paper
-            #     i = k if not self.shift else (start + k) % len(receiver)
-            #     v = receiver[i]
-            #     if v not in donation_as_set:
-            #         y.append(v)
-            # y_all_possible_interfaces = set(self.all_interface_locations_ids) & set(y)
-            # y = np.concatenate([y[:start], donation, y[start:]]).astype(copy=False, dtype=int)
-            # child_interfaces = y[:self.n_interfaces]
-            # child_tiles = y[self.n_interfaces:]
+            Y[0, i, :] = offspring_a
+            Y[1, i, :] = offspring_b
+            continue
 
             # Check if there are duplicates
             def repair_duplicates(interfaces, tiles):
@@ -180,6 +172,45 @@ class SeparateOrderCrossover(Crossover):
             Y[0, i, :] = offspring_a
             Y[1, i, :] = offspring_b
         return Y
+
+    def order_crossover_with_repair(self, parent_a, parent_b):
+        """ with interface repair """
+        receiver, donor = parent_a, parent_b
+        start, end = random_sequence(self.n_tiles + self.n_interfaces)
+
+        donation = np.copy(donor[start:end + 1])
+        donation_as_set = set(donation)
+        y = []
+        for k in range(len(receiver)):
+            # do the shift starting from the swapped sequence - as proposed in the paper
+            i = k if not self.shift else (start + k) % len(receiver)
+            v = receiver[i]
+            if v not in donation_as_set:
+                y.append(v)
+        y = np.concatenate([y[:start], donation, y[start:]]).astype(copy=False, dtype=int)
+        assert len(np.unique(y)) == len(y), "Duplicates in offspring A"
+
+        # Check that first part of the chromosome are interfaces 
+        interfaces = y[:self.n_interfaces] # loc ids
+        not_interfaces = np.setdiff1d(interfaces, self.all_interface_locations_ids)
+
+        assert len(y) >= self.n_interfaces + self.n_tiles
+        if len(not_interfaces) > 0:
+            tiles = y[self.n_interfaces:]
+            interfaces_among_tiles = np.setdiff1d(tiles, self.all_interface_locations_ids)
+
+            not_interfaces_indexes = [np.where(interfaces == ni)[0][0] for ni in not_interfaces]
+            interfaces_among_tiles_indexes = [np.where(tiles == ni)[0][0] for ni in interfaces_among_tiles]
+
+            while len(not_interfaces_indexes) > 0 and len(interfaces_among_tiles_indexes) >= len(not_interfaces_indexes):
+                ni = not_interfaces_indexes.pop(0)
+                ii = interfaces_among_tiles_indexes.pop(0)
+                interfaces[ni], tiles[ii] = tiles[ii], interfaces[ni] # swap
+
+            assert len(not_interfaces_indexes) == 0, "Not all interfaces were repaired"
+            return np.concatenate([interfaces, tiles[:self.n_tiles]])
+        
+        return y[:self.n_interfaces + self.n_tiles]
 
 class MachinesMutation(Mutation):
     def __init__(self, n_interfaces, n_tiles, all_available_positions: list[tuple[int, int]], prob=1.0, **kwargs):
