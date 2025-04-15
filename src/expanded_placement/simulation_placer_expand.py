@@ -699,7 +699,6 @@ def bfs_shortest_paths(start: tuple, available_machine_positions: list[tuple[int
                 queue.append((neighbor, dist + 1))
     return distances
 
-# TODO remove in favour of calculation through nx
 def compute_shortest_path_matrix(available_machine_positions: list[tuple[int, int]]):
     distance_matrix = np.full((len(available_machine_positions), len(available_machine_positions)), np.inf)
     
@@ -852,9 +851,9 @@ def save_placement(placement, best_obj, mean_obj, expected_steps_obj, expected_i
     medicine_labels = get_medicine_labels(placement, args, drug_packing, x, y)
     placement_colors = get_placement_colors(drug_packing, x, y, medicine_labels)
 
+    unique_id_by_date = datetime.now().strftime("%y%m%d%H%M")
     layout_string_for_filename = f"layout_{x[-1]+1}x{y[-1]+1}" # TODO maybe smth better to capture blocked and interface locations 
     if args.figs:        
-        unique_id_by_date = datetime.now().strftime("%y%m%d%H%M")
         fig = px.imshow(placement_colors, title=f"fitness value: {min(best_obj)} (expected steps: {expected_steps_obj[best_obj.index(min(best_obj))]}, expected interruptions: {expected_interruptions_obj[best_obj.index(min(best_obj))]})",
                         color_continuous_scale=get_color_scale(placement_colors))
         fig.update_layout(
@@ -892,7 +891,7 @@ def save_placement(placement, best_obj, mean_obj, expected_steps_obj, expected_i
         }
     }
 
-    filename = f"{layout_string_for_filename}_ntiles_{n_tiles}_ninterfaces_{args.interfaces}_ndispensers_{drug_input['n_dispensers']}_nevals_{args.evals}.json"
+    filename = f"{layout_string_for_filename}_ntiles_{n_tiles}_ninterfaces_{args.interfaces}_ndispensers_{drug_input['n_dispensers']}_nevals_{args.evals}_{unique_id_by_date}.json"
     if len(args.output) > 0:
         filename = os.path.join(args.output, filename)
 
