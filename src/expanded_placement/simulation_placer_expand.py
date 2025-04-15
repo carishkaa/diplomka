@@ -199,8 +199,8 @@ class SeparateOrderCrossover(Crossover):
             tiles = y[self.n_interfaces:]
             interfaces_among_tiles = np.setdiff1d(tiles, self.all_interface_locations_ids)
 
-            not_interfaces_indexes = [np.where(interfaces == ni)[0][0] for ni in not_interfaces]
-            interfaces_among_tiles_indexes = [np.where(tiles == ni)[0][0] for ni in interfaces_among_tiles]
+            not_interfaces_indexes = np.where(np.isin(interfaces, not_interfaces))[0]
+            interfaces_among_tiles_indexes = np.where(np.isin(tiles, interfaces_among_tiles))[0]
 
             while len(not_interfaces_indexes) > 0 and len(interfaces_among_tiles_indexes) >= len(not_interfaces_indexes):
                 ni = not_interfaces_indexes.pop(0)
