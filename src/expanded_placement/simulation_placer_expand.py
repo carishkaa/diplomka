@@ -386,7 +386,7 @@ class RepairHoles(Repair):
 
 
 class ExpandedPlacementProblem(ElementwiseProblem):
-    def __init__(self, patients: list[set], n_tiles, sorted_names, drug_packing, n_interfaces, n_episodes, distances: np.ndarray, drug_dosing, all_available_position_idxs, all_available_positions, **kwargs):
+    def __init__(self, patients: list[set], n_tiles, sorted_names, drug_packing, n_interfaces, n_episodes, distances: np.ndarray, drug_dosing, all_available_positions, overprocessed_quantile: float, interruptions_coefficient: float, **kwargs):
         self.n_tiles = n_tiles
         self.sorted_names = sorted_names
         self.n_interfaces = n_interfaces
@@ -410,6 +410,10 @@ class ExpandedPlacementProblem(ElementwiseProblem):
         # print('reverse_drug_packing', self.reverse_drug_packing)
 
         self.all_available_positions = all_available_positions
+
+        # Hyperparameters of the congestion interruption term
+        self.overprocessed_quantile = overprocessed_quantile
+        self.interruptions_coefficient = interruptions_coefficient
 
         super().__init__(n_var=n_tiles+n_interfaces, n_obj=1, vtype=int, **kwargs)
 
@@ -496,7 +500,7 @@ class ExpandedPlacementProblem(ElementwiseProblem):
 
         # starttime = time.perf_counter()
         # Dispensers with processing time > bound_processing_time are considered overprocessed
-        bound_processing_time = np.quantile(out["processing_time"], 0.6)
+        bound_processing_time = np.quantile(out["processing_time"], self.overprocessed_quantile)
 
         # Filter simulation_pairs to have only pairs that contains at least one interface OR at least one overprocessed dispenser
         all_pairs = dict()
@@ -565,7 +569,7 @@ class ExpandedPlacementProblem(ElementwiseProblem):
         # print_debug(f"Time taken in ms (checkpaths): {(endtime_checkpaths - starttime_checkpaths) * 1000:.2f} ms")
         out["F_interruptions"] = interrupted_pairs # expected number of interrupted prejezdu per patietn
         # TODO: maybe if <0.5 just keep 0.5 so that it can focus more on expected steps optimization
-        out["F"] += out["F_interruptions"]
+        out["F"] += out["F_interruptions"] * self.interruptions_coefficient
         # endtime = time.perf_counter()
         # print_debug(f"Time taken in ms: {(endtime - starttime) * 1000:.2f} ms")
 
@@ -764,7 +768,8 @@ def compute_placement(args, layout: Layout, patient_list, sorted_names, drug_pac
     runner = StarmapParallelization(pool.starmap)
     problem = ExpandedPlacementProblem(patient_list, n_tiles=n_tiles, distances=distances, sorted_names=sorted_names,
                                drug_packing=drug_packing, n_interfaces=n_interfaces, n_episodes=n_episodes,
-                               elementwise_runner=runner, drug_dosing=drug_dosing, all_available_position_idxs=all_available_position_idxs, all_available_positions=all_available_positions)
+                               elementwise_runner=runner, drug_dosing=drug_dosing, all_available_positions=all_available_positions, 
+                               overprocessed_quantile=args.overprocessed_quantile, interruptions_coefficient=args.interruptions_coefficient)
 
     sampling = InterfaceTileSampling(n_interfaces, n_tiles, all_available_position_idxs, interface_position_idxs, all_available_positions, 
                                      percent_of_random_perm=1 if empty_location_counts > 0 else 0.5)
@@ -875,11 +880,16 @@ def save_placement(placement, best_obj, mean_obj, expected_steps_obj, expected_i
         "n_episodes": args.episodes,
         "n_evals": args.evals,
         "n_popsize": args.pop_size,
-        "obj_progress": {"mean": mean_obj, "best": best_obj, "expected_interruptions": expected_interruptions_obj, "expected_steps": expected_steps_obj},
         "obj": min(best_obj),
+        "obj_progress": {"mean": mean_obj, "best": best_obj, "expected_interruptions": expected_interruptions_obj, "expected_steps": expected_steps_obj},
         "placement": medicine_labels,
         "packer_result": drug_packing,
-        "layout": layout
+        "layout": layout,
+        "hyperparameters": {
+            "interruptions_coefficient": args.interruptions_coefficient,
+            "overprocessed_quantile": args.overprocessed_quantile,
+            # todo params related to GA: mutation rates etc
+        }
     }
 
     filename = f"{layout_string_for_filename}_ntiles_{n_tiles}_ninterfaces_{args.interfaces}_ndispensers_{drug_input['n_dispensers']}_nevals_{args.evals}.json"
@@ -899,19 +909,15 @@ def save_processing_times_plot(placement, processing_count, processing_times, ar
     xs = range(len(placement[0]))
     ys = range(len(placement))
 
-    # processing_counts_matrix = np.zeros((len(placement), len(placement[0])))
     processing_times_matrix = np.zeros((len(placement), len(placement[0])))
     medicine_labels = get_medicine_labels(placement, args, drug_packing, xs, ys)
     for i in ys:
         for j in xs:
             if placement[i, j] == EMPTY_LOCATION:
-                # processing_counts_matrix[i, j] = np.nan
                 processing_times_matrix[i, j] = np.nan
             elif placement[i, j] == BLOCKED_LOCATION:
-                # processing_counts_matrix[i, j] = np.nan
                 processing_times_matrix[i, j] = np.nan
             else:
-                # processing_counts_matrix[i, j] = processing_count[placement[i, j]]
                 processing_times_matrix[i, j] = round(processing_times[placement[i, j]], 2)
 
     processing_times_text = processing_times_matrix.copy().astype(str)
@@ -923,16 +929,6 @@ def save_processing_times_plot(placement, processing_count, processing_times, ar
                 processing_times_text[i, j] = "empty"
             if medicine_labels[i][j] == "blocked":
                 processing_times_text[i, j] = "blocked"
-    
-
-    # fig = px.imshow(processing_counts_matrix, title="Processing count for each machine and interface in the solution",
-    #                 color_continuous_scale="Viridis", text_auto=True)
-    # fig.update_layout(
-    #     xaxis = dict(tickmode = 'linear', tick0 = 0, dtick = 1, mirror=True, showline=True, linecolor='lightgray'),
-    #     yaxis = dict(tickmode = 'linear', tick0 = 0, dtick = 1, mirror=True, showline=True, linecolor='lightgray')
-    # )
-    # fig.update_traces(customdata=medicine_labels, hovertemplate='%{customdata}', xgap=0.1, ygap=0.1)
-    # fig.write_html(os.path.join(args.output, "processing_count.html"))
 
     fig_times = px.imshow(processing_times_matrix, title="Processing time for each machine and interface in the solution",
                     color_continuous_scale="Viridis", text_auto=True)
@@ -1066,6 +1062,18 @@ def load_drug_dosing():
             drug_dosing[line[0]] = np.mean([int(line[-2]), int(line[-1])])
     return drug_dosing
 
+def range_limited_float_type(MIN_VAL, MAX_VAL):
+    """ Type function for argparse - a float within some predefined bounds """
+    def checker(arg):
+        try:
+            f = float(arg)
+        except ValueError:    
+            raise argparse.ArgumentTypeError("Must be a floating point number")
+        if f < MIN_VAL or f > MAX_VAL:
+            raise argparse.ArgumentTypeError("Argument must be < " + str(MAX_VAL) + " and > " + str(MIN_VAL))
+        return f
+    return checker
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description='Optimizes dispenser placement.',
@@ -1075,7 +1083,10 @@ if __name__ == '__main__':
     parser.add_argument("-l", "--layout", help="json file with layout info: n, m, unavailable locations, interface locations", type=str) 
     parser.add_argument("-i", "--interfaces", help="number of interface locations", type=int, default=2)
     parser.add_argument("-o", "--output", help="output directory for placement", type=str, default="")
-    # todo add ratios of different fitness, percent of overprocessed
+
+    parser.add_argument("--overprocessed-quantile", help="Dispensers that will have processing time during simulation above this quantile will be considered overprocessed. Used for interruptions fitness term.", type=range_limited_float_type(0, 1), default=0.6)
+    parser.add_argument("--interruptions-coefficient", help="Coefficient for expected number of interruptions in the objective function. Use 0 for omitting this term completely.", type=float, default=1)
+
     parser.add_argument("--evals", help="maximum number of evaluations", type=int, default=30000)
     parser.add_argument("--pop-size", help="size of population", type=int, default=100)
     parser.add_argument("--episodes", help="number of simulation episodes per patient", type=int, default=5)
