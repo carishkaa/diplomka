@@ -577,17 +577,32 @@ class ExpandedPlacementProblem(ElementwiseProblem):
         # max_processing_time = np.max(out["processing_time"])
 
         # Find groups of dispensers of same type (not multiple) and store their processing times 
-        processing_times_diff = [] # difference max-avg through this group
-        for drug_name, locations in self.reverse_drug_packing.items():
-            if len(locations) > 1:
-                mean = np.mean(out["processing_time"][locations])
-                maximum = np.max(out["processing_time"][locations])
-                processing_times_diff.append((mean, maximum - mean))
-        processing_times_diff.sort(key=lambda x: x[0], reverse=True)
-        processing_times_diff = [diff for _, diff in processing_times_diff]
+        # processing_times_diff = [] # difference max-avg through this group
+        # for drug_name, locations in self.reverse_drug_packing.items():
+        #     if len(locations) > 1:
+        #         mean = np.mean(out["processing_time"][locations])
+        #         maximum = np.max(out["processing_time"][locations])
+        #         processing_times_diff.append((mean, maximum - mean))
+        # processing_times_diff.sort(key=lambda x: x[0], reverse=True)
+        # processing_times_diff = [diff for _, diff in processing_times_diff]
         
-        out["F_max_processing_time"] = sum(processing_times_diff[:4]) * 0.01 # max_processing_time * 0.01
+        # out["F_max_processing_time"] = sum(processing_times_diff[:4]) * 0.01 # max_processing_time * 0.01
         # out["F"] += out["F_max_processing_time"]
+
+        # CONGESTION TERM - OVERPROCESSED LOCATIONS CANNOT BE NEIGHBORS. It should help with congestion
+        # Take all overprocessed locations and check if there is any other in neighborhood
+        neigh_overprocessed = 0 # how many edges between two overprocessed locations
+        visited = set()
+        for loc_coord in overprocessing_loc_coords:
+            visited.add(loc_coord)
+            for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                neighbor = (loc_coord[0] + dx, loc_coord[1] + dy)
+                # not visited, overprocessed, and not both interfaces
+                if neighbor not in visited and neighbor in overprocessing_loc_coords and not (loc_coord not in dispensers_loc_coords and neighbor not in dispensers_loc_coords):
+                    neigh_overprocessed += 1
+        out["F_max_processing_time"] = neigh_overprocessed
+        out["F"] += out["F_max_processing_time"] * 0.5
+
 
     def add_nodes_to_graph(self, valid_loc_coords, graph: nx.Graph, new_node_coord: tuple, target_node_coord):
         graph.add_node(new_node_coord)
