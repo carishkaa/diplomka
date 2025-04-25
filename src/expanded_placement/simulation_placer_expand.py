@@ -829,7 +829,7 @@ def get_color_scale(placement_colors):
     medicines_colors = [[start_medicine_color + one_part * i, color_seq[i]] for i in range(len(color_seq))]
     return [[blocked_color, "black"], [empty_color, "white"]] + medicines_colors + [[1, color_seq[-1]]]
 
-def save_placement(placement, best_obj, mean_obj, expected_steps_obj, expected_interruptions_obj, args, checkpoint=None):
+def save_placement(placement, best_obj, mean_obj, expected_steps_obj, expected_interruptions_obj, processing_times, args, checkpoint=None):
     drug_input = json.load(open(args.packing, "r"))
     drug_packing = drug_input["packing"]
     n_tiles = len(drug_packing.keys())
@@ -869,6 +869,9 @@ def save_placement(placement, best_obj, mean_obj, expected_steps_obj, expected_i
         "n_evals": args.evals,
         "n_popsize": args.pop_size,
         "obj": min(best_obj),
+        "obj_expected_steps": expected_steps_obj[-1],
+        "obj_expected_interruptions": expected_interruptions_obj[-1],
+        "obj_processing_time": processing_times[-1].tolist() if processing_times is not None else '',
         "obj_progress": {"mean": mean_obj, "best": best_obj, "expected_interruptions": expected_interruptions_obj, "expected_steps": expected_steps_obj},
         "placement": medicine_labels,
         "packer_result": drug_packing,
@@ -1108,7 +1111,8 @@ if __name__ == '__main__':
     # Plot init population
     # plot_init_pop(args, layout, drug_packing, res)
 
-    save_processing_times_plot(placement, res.algorithm.callback.data["processing_count"][-1], res.algorithm.callback.data["processing_time"][-1], args)
+    processing_times = res.algorithm.callback.data["processing_time"]
+    save_processing_times_plot(placement, res.algorithm.callback.data["processing_count"][-1], processing_times[-1], args)
 
 
     best_obj = res.algorithm.callback.data["best"]
@@ -1119,13 +1123,13 @@ if __name__ == '__main__':
     if args.checkpoints:
         solutions = res.algorithm.callback.data["solution"]
         first_solution = format_placement(solutions[0], layout, n_tiles, args.interfaces)
-        save_placement(first_solution, [best_obj[0]], [mean_obj[0]], [expect_steps_obj[0]], [expect_interruptions_obj[0]], args, checkpoint=0)
+        save_placement(first_solution, [best_obj[0]], [mean_obj[0]], [expect_steps_obj[0]], [expect_interruptions_obj[0]], [processing_times[0]], args, checkpoint=0)
         prev_obj = best_obj[0]
 
         for sol_id in range(1, len(best_obj)):
             if best_obj[sol_id] < prev_obj:
                 placement = format_placement(solutions[sol_id], layout, n_tiles, args.interfaces)
-                save_placement(placement, best_obj[0:(sol_id+1)], mean_obj[0:(sol_id+1)], expect_steps_obj[0:(sol_id+1)], expect_interruptions_obj[0:(sol_id+1)], args, checkpoint=sol_id)
+                save_placement(placement, best_obj[0:(sol_id+1)], mean_obj[0:(sol_id+1)], expect_steps_obj[0:(sol_id+1)], expect_interruptions_obj[0:(sol_id+1)], None, args, checkpoint=sol_id)
                 prev_obj = best_obj[sol_id]
     else:
-        save_placement(placement, best_obj, mean_obj, expect_steps_obj, expect_interruptions_obj, args)
+        save_placement(placement, best_obj, mean_obj, expect_steps_obj, expect_interruptions_obj, processing_times, args)
