@@ -164,7 +164,7 @@ class SeparateOrderCrossover(Crossover):
         return np.array(transformed_child)
 
 class MachinesMutation(Mutation):
-    def __init__(self, n_interfaces, n_tiles, all_available_positions: list[tuple[int, int]], prob=1.0, **kwargs):
+    def __init__(self, n_interfaces, n_tiles, all_available_positions: list[tuple[int, int]], all_interface_locations_ids, prob=1.0, **kwargs):
         """
         Applies to machines only (second part of chromosome). Inverse sequence, swap and move operators.
         """
@@ -173,6 +173,7 @@ class MachinesMutation(Mutation):
         self.n_interfaces = n_interfaces
         self.n_tiles = n_tiles
         self.all_available_positions = all_available_positions
+        self.all_interface_locations_ids = all_interface_locations_ids
 
     def _do(self, problem, X, **kwargs):
         Y = X.copy()
@@ -183,18 +184,40 @@ class MachinesMutation(Mutation):
             # Inverse sequence
             if np.random.random() < 0.7:
                 seq = random_sequence(self.n_tiles)
-                tiles = y[self.n_interfaces:].copy()
+                all_tiles = y.copy()
 
-                sorted_indices = np.argsort(tiles)
+                sorted_indices = np.argsort(all_tiles)
                 reverse_mapping = np.argsort(sorted_indices)
 
                 mutated_indices = inversion_mutation(sorted_indices, seq, inplace=True)
-                mutated_tiles = tiles[reverse_mapping[mutated_indices]]
+                mutated_tiles = all_tiles[reverse_mapping[mutated_indices]]
+                assert len(np.unique(mutated_tiles)) == len(mutated_tiles), "Duplicates in offspring"
+                assert len(mutated_tiles) == len(y), "Length of mutated chromosome is not equal to length of original y"
 
-                Y[i, self.n_interfaces:] = mutated_tiles
+                # Check if first part of the chromosome are interfaces
+                interfaces_to_check = mutated_tiles[:self.n_interfaces]
+                not_interfaces = np.setdiff1d(interfaces_to_check, self.all_interface_locations_ids)
+                if len(not_interfaces) > 0:
+                    # Swap with tiles from all_tiles[self.n_interfaces:] that are interfaces locations
+                    tiles = mutated_tiles[self.n_interfaces:]
+                    interfaces_among_tiles = np.intersect1d(tiles, self.all_interface_locations_ids)
+                    assert len(interfaces_among_tiles) >= len(not_interfaces), "Not enough interfaces in tiles to swap with not interfaces"
+
+                    not_interfaces_indexes = np.where(np.isin(mutated_tiles, not_interfaces))[0]
+                    interfaces_among_tiles_indexes = np.where(np.isin(mutated_tiles, interfaces_among_tiles))[0]
+                    np.random.shuffle(interfaces_among_tiles_indexes)
+                    interfaces_among_tiles_indexes = interfaces_among_tiles_indexes[:len(not_interfaces_indexes)]
+
+                    mutated_tiles[not_interfaces_indexes], mutated_tiles[interfaces_among_tiles_indexes] = mutated_tiles[interfaces_among_tiles_indexes], mutated_tiles[not_interfaces_indexes] # swap
+
+                assert len(np.unique(mutated_tiles)) == len(mutated_tiles), "Duplicates in offspring"
+                assert len(np.setdiff1d(interfaces_to_check, self.all_interface_locations_ids)) == 0, "Not all interfaces were repaired"
+
+                Y[i] = mutated_tiles
+                # Y[i, self.n_interfaces:] = mutated_tiles
                 assert len(np.unique(Y[i])) == len(Y[i])
-            
-            swap_proba = 0.3 if current_gen < 100 else 0.9
+
+            swap_proba = 0.3 if current_gen < 100 else 0.5
             # Swap - exchange two machines
             if np.random.random() < swap_proba: # this is good in the end
                 idx = np.random.choice(range(self.n_tiles))
@@ -746,7 +769,7 @@ def compute_placement(args, layout: Layout, patient_list, sorted_names, drug_pac
         sampling=sampling,
         repair=None if empty_location_counts == 0 else repair_holes,
         crossover=SeparateOrderCrossover(n_interfaces, n_tiles, all_available_position_idxs, interface_position_idxs),
-        mutation=MachinesMutation(n_interfaces, n_tiles, all_available_positions),
+        mutation=MachinesMutation(n_interfaces, n_tiles, all_available_positions, interface_position_idxs),
         eliminate_duplicates=True
     )
 
