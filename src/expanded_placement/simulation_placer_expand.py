@@ -106,6 +106,17 @@ class SeparateOrderCrossover(Crossover):
         for i in range(n_matings):
             parent_a, parent_b = X[:, i, :]
 
+            # SEPARATALY interfaces and machines
+            # Crossover for interfaces TODO maybe for interfaces we don't need order crossover, better try smth else?
+            # start, end = random_sequence(self.n_interfaces)
+            # interfaces_a = ox(parent_a[:self.n_interfaces], parent_b[:self.n_interfaces], seq=(start, end), shift=self.shift)
+            # interfaces_b = ox(parent_b[:self.n_interfaces], parent_a[:self.n_interfaces], seq=(start, end), shift=self.shift)
+
+            # # Crossover for tiles
+            # start, end = random_sequence(self.n_tiles)
+            # tiles_a = ox(parent_a[self.n_interfaces:], parent_b[self.n_interfaces:], seq=(start, end), shift=self.shift)
+            # tiles_b = ox(parent_a[self.n_interfaces:], parent_b[self.n_interfaces:], seq=(start, end), shift=self.shift)
+
             # Together everything 
             offspring_a = self.order_crossover_with_repair(parent_a, parent_b)
             assert len(offspring_a) == len(parent_a) == len(parent_b)
@@ -160,7 +171,6 @@ class SeparateOrderCrossover(Crossover):
             # if not empty location
             if child[i] < self.n_interfaces + self.n_tiles:
                 transformed_child[child[i]] = i
-        assert len(np.unique(transformed_child)) == len(transformed_child), "Duplicates in offspring" 
         return np.array(transformed_child)
 
 class MachinesMutation(Mutation):
@@ -182,7 +192,7 @@ class MachinesMutation(Mutation):
         # TODO check what operators do we need and with what probability
         for i, y in enumerate(X):
             # Inverse sequence
-            if np.random.random() < 0.7:
+            if np.random.random() < 0.95:
                 seq = random_sequence(self.n_tiles)
                 all_tiles = y.copy()
 
@@ -215,11 +225,10 @@ class MachinesMutation(Mutation):
 
                 Y[i] = mutated_tiles
                 # Y[i, self.n_interfaces:] = mutated_tiles
-                assert len(np.unique(Y[i])) == len(Y[i])
+                # assert len(np.unique(Y[i])) == len(Y[i])
 
-            swap_proba = 0.3 if current_gen < 100 else 0.5
             # Swap - exchange two machines
-            if np.random.random() < swap_proba: # this is good in the end
+            elif np.random.random() < 0.8:
                 idx = np.random.choice(range(self.n_tiles))
                 new_loc = np.random.choice(np.setdiff1d(range(self.n_tiles), [idx]))
                 Y[i, self.n_interfaces + idx], Y[i, self.n_interfaces + new_loc] = Y[i, self.n_interfaces + new_loc], Y[i, self.n_interfaces + idx]
@@ -401,7 +410,6 @@ class ExpandedPlacementProblem(ElementwiseProblem):
         return random.choices(range(len(pdf)), weights=pdf)[0]
 
     def _evaluate(self, x, out, *args, **kwargs):
-        # starttime = time.perf_counter() # TODO remove - tracks time of evaluation
 
         get_index_in_x = {loc_id: idx for idx, loc_id in enumerate(x)}
         processing_time = np.zeros(self.n_tiles+self.n_interfaces, dtype=int)
@@ -462,7 +470,6 @@ class ExpandedPlacementProblem(ElementwiseProblem):
         out["F"] = total_distance_patients/(self.n_episodes*len(self.patients))
         out["processing_time"] = processing_time / self.n_episodes # avg processing time per episode
 
-
         # CONGESTION TERM - INTERRUPTIONS
 
         # (A, B)+(B, A), and divide to obtain expected value per patient
@@ -472,8 +479,8 @@ class ExpandedPlacementProblem(ElementwiseProblem):
                 simulation_pairs_visit_count[i, j] = simulation_pairs_visit_count[i, j] / (self.n_episodes * len(self.patients))
                 simulation_pairs_visit_count[j, i] = 0
 
-        # starttime = time.perf_counter()
-        # Dispensers with processing time > bound_processing_time are considered overprocessed
+
+        # Dispensers with processing time > bound_processing_time are considered high-traffic
         bound_processing_time = np.quantile(out["processing_time"], self.overprocessed_quantile)
 
         # Filter simulation_pairs to have only pairs that contains at least one interface OR at least one overprocessed dispenser
@@ -490,16 +497,16 @@ class ExpandedPlacementProblem(ElementwiseProblem):
 
         # Keep only valid locations in graph (not empty, not overprocessed, not interface)
         dispensers_loc_coords = [self.all_available_positions[loc] for loc in x[self.n_interfaces:]]
+        all_loc_coords = [self.all_available_positions[loc] for loc in x]
         overprocessing_locations = x[np.where(out["processing_time"] > bound_processing_time)[0]]
         overprocessing_loc_coords = [self.all_available_positions[loc] for loc in overprocessing_locations]
         valid_loc_coords = [loc for loc in self.all_available_positions if loc in dispensers_loc_coords and loc not in overprocessing_loc_coords]
         valid_loc_coords = set(valid_loc_coords)
         G = create_grid_graph(valid_loc_coords)
-        G_all_dispensers = create_grid_graph(dispensers_loc_coords)
+        G_all_dispensers = create_grid_graph(all_loc_coords) # dispensers and interfaces, because we can go through interfaces too
 
-
-        # starttime_checkpaths = time.perf_counter()
         interrupted_pairs = 0 # minimize this
+        visited_coords = dict() # coord -> count 
         for pair, pair_count in all_pairs.items():
             A, B = pair # A, B are location ids
             A_coord = self.all_available_positions[A]
@@ -507,49 +514,45 @@ class ExpandedPlacementProblem(ElementwiseProblem):
 
             is_A_valid = A_coord in valid_loc_coords
             is_B_valid = B_coord in valid_loc_coords
-            is_A_dispenser = A in x[self.n_interfaces:]
-            is_B_dispenser = B in x[self.n_interfaces:]
 
             if not is_A_valid:
                 G = self.add_nodes_to_graph(valid_loc_coords, G, A_coord, B_coord)
-            if not is_A_dispenser:
-                G_all_dispensers = self.add_nodes_to_graph(dispensers_loc_coords, G_all_dispensers, A_coord, B_coord)
-
             if not is_B_valid:
                 G = self.add_nodes_to_graph(valid_loc_coords, G, B_coord, A_coord)
-            if not is_B_dispenser:
-                G_all_dispensers = self.add_nodes_to_graph(dispensers_loc_coords, G_all_dispensers, B_coord, A_coord)
 
             # Is there a path that does not go through empty/overprocessed locations and interfaces?
             len_without_overprocessed = shortest_path_len(G, A_coord, B_coord) # 20 ms
+            path_with_overprocessed = shortest_path(G_all_dispensers, A_coord, B_coord)
+            for loc in path_with_overprocessed:
+                visited_coords[loc] = visited_coords.get(loc, 0) + pair_count
 
             if len_without_overprocessed == -1:
                 interrupted_pairs += pair_count
-            else: 
-                len_with_overprocessed = shortest_path_len(G_all_dispensers, A_coord, B_coord)
-                if len_with_overprocessed < len_without_overprocessed:
-                    interrupted_pairs += pair_count
-                    # print("There is a path that goes through empty/overprocessed locations and interfaces, but it's longer than the shortest one", len_without_overprocessed-len_with_overprocessed)
+            elif len(path_with_overprocessed) - 1 < len_without_overprocessed:
+                interrupted_pairs += pair_count
+                # print("There is a path that does not go go through high-traffic locations and interfaces, but it's longer than the shortest one", len_without_overprocessed-len_with_overprocessed)
 
             if not is_A_valid:
                 G.remove_node(A_coord)
-            if not is_A_dispenser:
-                G_all_dispensers.remove_node(A_coord)
             if not is_B_valid:
                 G.remove_node(B_coord)
-            if not is_B_dispenser:
-                G_all_dispensers.remove_node(B_coord)
-        # endtime_checkpaths = time.perf_counter()
-        # print_debug(f"Time taken in ms (checkpaths): {(endtime_checkpaths - starttime_checkpaths) * 1000:.2f} ms")
+
         out["F_interruptions"] = interrupted_pairs # expected number of interrupted prejezdu per patietn
-        # TODO: maybe if <0.5 just keep 0.5 so that it can focus more on expected steps optimization
         out["F"] += out["F_interruptions"] * self.interruptions_coefficient
-        # endtime = time.perf_counter()
-        # print_debug(f"Time taken in ms: {(endtime - starttime) * 1000:.2f} ms")
+
+        # CONGESTION TRANSPORT VS DISPENSING
+        # boundary_value = np.quantile(list(visited_coords.values()), self.overprocessed_quantile)
+        # for loc in list(visited_coords.keys()):
+        #     if visited_coords[loc] <= boundary_value:
+        #         del visited_coords[loc]
+        # # Calculate the number of same elements between visited_coords.keys() and overprocessing_loc_coords
+        # common_elements_count = len(set(visited_coords.keys()) & set(overprocessing_loc_coords))
+        # out["F_max_processing_time"] = common_elements_count
+        # out["F"] += common_elements_count * 0.5
+
 
         # CONGESTION TERM - PROCESSING BALANCE
         # max_processing_time = np.max(out["processing_time"])
-
         # Find groups of dispensers of same type (not multiple) and store their processing times 
         # processing_times_diff = [] # difference max-avg through this group
         # for drug_name, locations in self.reverse_drug_packing.items():
@@ -565,17 +568,17 @@ class ExpandedPlacementProblem(ElementwiseProblem):
 
         # CONGESTION TERM - OVERPROCESSED LOCATIONS CANNOT BE NEIGHBORS. It should help with congestion
         # Take all overprocessed locations and check if there is any other in neighborhood
-        neigh_overprocessed = 0 # how many edges between two overprocessed locations
-        visited = set()
-        for loc_coord in overprocessing_loc_coords:
-            visited.add(loc_coord)
-            for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                neighbor = (loc_coord[0] + dx, loc_coord[1] + dy)
-                # not visited, overprocessed, and not both interfaces
-                if neighbor not in visited and neighbor in overprocessing_loc_coords and not (loc_coord not in dispensers_loc_coords and neighbor not in dispensers_loc_coords):
-                    neigh_overprocessed += 1
-        out["F_max_processing_time"] = neigh_overprocessed
-        out["F"] += out["F_max_processing_time"] * 0.5
+        # neigh_overprocessed = 0 # how many edges between two overprocessed locations
+        # visited = set()
+        # for loc_coord in overprocessing_loc_coords:
+        #     visited.add(loc_coord)
+        #     for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+        #         neighbor = (loc_coord[0] + dx, loc_coord[1] + dy)
+        #         # not visited, overprocessed, and not both interfaces
+        #         if neighbor not in visited and neighbor in overprocessing_loc_coords and not (loc_coord not in dispensers_loc_coords and neighbor not in dispensers_loc_coords):
+        #             neigh_overprocessed += 1
+        # out["F_max_processing_time"] = neigh_overprocessed # todo maybe divide by total number of edges? to get a percent and not just a random number
+        # out["F"] += out["F_max_processing_time"] * 0.5
 
 
     def add_nodes_to_graph(self, valid_loc_coords, graph: nx.Graph, new_node_coord: tuple, target_node_coord):
@@ -586,6 +589,13 @@ class ExpandedPlacementProblem(ElementwiseProblem):
                 graph.add_edge(new_node_coord, neighbor)
         return graph
 
+def shortest_path(G, source, target):
+    """ -1 if no path exists, otherwise returns length of the path """
+    try:
+        p = nx.bidirectional_shortest_path(G, source, target)
+        return p
+    except nx.NetworkXNoPath:
+        return []
 
 def shortest_path_len(G, source, target):
     """ -1 if no path exists, otherwise returns length of the path """
@@ -648,7 +658,8 @@ class MyOutput(Output):
         self.f_avg.set(round(algorithm.pop.get("F").mean(), 4))
         argmin_idx = np.argmin(algorithm.pop.get("F"))
         self.f_min.set(algorithm.pop.get("F")[argmin_idx][0])
-        self.f_interruption.set(round(algorithm.pop.get("F_interruptions")[argmin_idx], 3))
+        interruptions = algorithm.pop.get("F_interruptions")[argmin_idx]
+        self.f_interruption.set(round(interruptions, 3) if interruptions else None)
         self.F_expected_steps.set(algorithm.pop.get("F_expected_steps")[argmin_idx])
         self.F_max_processing_times.set(algorithm.pop.get("F_max_processing_time")[argmin_idx])
 
@@ -829,7 +840,7 @@ def get_color_scale(placement_colors):
     medicines_colors = [[start_medicine_color + one_part * i, color_seq[i]] for i in range(len(color_seq))]
     return [[blocked_color, "black"], [empty_color, "white"]] + medicines_colors + [[1, color_seq[-1]]]
 
-def save_placement(placement, best_obj, mean_obj, expected_steps_obj, expected_interruptions_obj, processing_times, args, checkpoint=None):
+def save_placement(placement, best_obj, mean_obj, expected_steps_obj, expected_interruptions_obj, processing_times_mat, args, checkpoint=None):
     drug_input = json.load(open(args.packing, "r"))
     drug_packing = drug_input["packing"]
     n_tiles = len(drug_packing.keys())
@@ -840,7 +851,8 @@ def save_placement(placement, best_obj, mean_obj, expected_steps_obj, expected_i
     medicine_labels = get_medicine_labels(placement, args, drug_packing, x, y)
     placement_colors = get_placement_colors(drug_packing, x, y, medicine_labels)
 
-    unique_id_by_date = datetime.now().strftime("%y%m%d%H%M")
+    now = datetime.now()
+    unique_id_by_date = now.strftime("%y%m%d%H%M")
     layout_string_for_filename = f"layout_{x[-1]+1}x{y[-1]+1}" # TODO maybe smth better to capture blocked and interface locations 
     if args.figs:        
         fig = px.imshow(placement_colors, title=f"fitness value: {min(best_obj)} (expected steps: {expected_steps_obj[best_obj.index(min(best_obj))]}, expected interruptions: {expected_interruptions_obj[best_obj.index(min(best_obj))]})",
@@ -853,9 +865,10 @@ def save_placement(placement, best_obj, mean_obj, expected_steps_obj, expected_i
         if checkpoint is not None:
             fig.write_html(os.path.join(args.output, f"{layout_string_for_filename}_ntiles_{n_tiles}_ninterfaces_{args.interfaces}_nevals_{args.evals}_placer_simulation_checkpoints_{checkpoint}_{unique_id_by_date}.html"))
         else:
-            fig.write_html(os.path.join(args.output, f"{layout_string_for_filename}_{y[-1]+1}_ntiles_{n_tiles}_ninterfaces_{args.interfaces}_nevals_{args.evals}_placer_simulation_{unique_id_by_date}.html"))
+            fig.write_html(os.path.join(args.output, f"{layout_string_for_filename}_ntiles_{n_tiles}_ninterfaces_{args.interfaces}_nevals_{args.evals}_placer_simulation_{unique_id_by_date}.html"))
 
-        fig_convergence = px.line(pd.DataFrame({"best": best_obj, "mean": mean_obj, "expected steps": expected_steps_obj, "expected interruptions": expected_interruptions_obj}), labels=dict(x="generation [-]", y="fitness value [-]"))
+        data_convergence = {"best": best_obj, "mean": mean_obj, "expected steps": expected_steps_obj, "expected interruptions": expected_interruptions_obj} if  expected_interruptions_obj[0] else {"best": best_obj, "mean": mean_obj ,  "expected steps": expected_steps_obj }
+        fig_convergence = px.line(pd.DataFrame(data_convergence), labels=dict(x="generation [-]", y="fitness value [-]"))
         if checkpoint is not None:
             fig_convergence.write_html(os.path.join(args.output, f"{layout_string_for_filename}_ntiles_{n_tiles}_ninterfaces_{args.interfaces}_nevals_{args.evals}_convergence_plot_checkpoints_{checkpoint}_{unique_id_by_date}.html"))
         else:
@@ -873,6 +886,7 @@ def save_placement(placement, best_obj, mean_obj, expected_steps_obj, expected_i
         "obj_expected_interruptions": expected_interruptions_obj[-1],
         "obj_processing_time": processing_times[-1].tolist() if processing_times is not None else '',
         "obj_progress": {"mean": mean_obj, "best": best_obj, "expected_interruptions": expected_interruptions_obj, "expected_steps": expected_steps_obj},
+        "processing_times_matrix_of_best": processing_times_mat.tolist() if processing_times_mat is not None else '', # TODO change NaN in processing_times_mat to -1 or null 
         "placement": medicine_labels,
         "packer_result": drug_packing,
         "layout": layout,
@@ -880,7 +894,8 @@ def save_placement(placement, best_obj, mean_obj, expected_steps_obj, expected_i
             "interruptions_coefficient": args.interruptions_coefficient,
             "overprocessed_quantile": args.overprocessed_quantile,
             # todo params related to GA: mutation rates etc
-        }
+        },
+        "date": now.strftime("%y-%m-%d %H:%M")
     }
 
     filename = f"{layout_string_for_filename}_ntiles_{n_tiles}_ninterfaces_{args.interfaces}_ndispensers_{drug_input['n_dispensers']}_nevals_{args.evals}_{unique_id_by_date}.json"
@@ -905,9 +920,9 @@ def save_processing_times_plot(placement, processing_count, processing_times, ar
     for i in ys:
         for j in xs:
             if placement[i, j] == EMPTY_LOCATION:
-                processing_times_matrix[i, j] = np.nan
+                processing_times_matrix[i, j] = None
             elif placement[i, j] == BLOCKED_LOCATION:
-                processing_times_matrix[i, j] = np.nan
+                processing_times_matrix[i, j] = None
             else:
                 processing_times_matrix[i, j] = round(processing_times[placement[i, j]], 2)
 
@@ -933,10 +948,11 @@ def save_processing_times_plot(placement, processing_count, processing_times, ar
     file_path = os.path.join(args.output, "processing_times.html")
     fig_times.write_html(file_path, include_plotlyjs='cdn', full_html=True)
     inject_highlight_script(file_path)
+    return processing_times_matrix
 
 
 def inject_highlight_script(file_path):
-    """ Injects script to highlight on click same dispensers in the plot """
+    """ Injects script to highlight on click same dispensers in the plot of processing times """
     js_script = """
     <script>
         document.addEventListener('DOMContentLoaded', function () {
@@ -1066,6 +1082,7 @@ def range_limited_float_type(MIN_VAL, MAX_VAL):
     return checker
 
 if __name__ == '__main__':
+    alg_start_time = datetime.now()
     parser = argparse.ArgumentParser(
         description='Optimizes dispenser placement.',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -1108,11 +1125,13 @@ if __name__ == '__main__':
 
     placement, res = compute_placement(args, layout, patient_list, sorted_names, drug_packing, drug_dosing)
 
+    diff_time = datetime.now() - alg_start_time
+    print("Time: " , diff_time, ", seconds: ", diff_time.seconds)
+
     # Plot init population
     # plot_init_pop(args, layout, drug_packing, res)
-
     processing_times = res.algorithm.callback.data["processing_time"]
-    save_processing_times_plot(placement, res.algorithm.callback.data["processing_count"][-1], processing_times[-1], args)
+    processing_times_matrix = save_processing_times_plot(placement, res.algorithm.callback.data["processing_count"][-1], processing_times[-1], args)
 
 
     best_obj = res.algorithm.callback.data["best"]
@@ -1123,7 +1142,7 @@ if __name__ == '__main__':
     if args.checkpoints:
         solutions = res.algorithm.callback.data["solution"]
         first_solution = format_placement(solutions[0], layout, n_tiles, args.interfaces)
-        save_placement(first_solution, [best_obj[0]], [mean_obj[0]], [expect_steps_obj[0]], [expect_interruptions_obj[0]], [processing_times[0]], args, checkpoint=0)
+        save_placement(first_solution, [best_obj[0]], [mean_obj[0]], [expect_steps_obj[0]], [expect_interruptions_obj[0]], None, args, checkpoint=0)
         prev_obj = best_obj[0]
 
         for sol_id in range(1, len(best_obj)):
@@ -1132,4 +1151,4 @@ if __name__ == '__main__':
                 save_placement(placement, best_obj[0:(sol_id+1)], mean_obj[0:(sol_id+1)], expect_steps_obj[0:(sol_id+1)], expect_interruptions_obj[0:(sol_id+1)], None, args, checkpoint=sol_id)
                 prev_obj = best_obj[sol_id]
     else:
-        save_placement(placement, best_obj, mean_obj, expect_steps_obj, expect_interruptions_obj, processing_times, args)
+        save_placement(placement, best_obj, mean_obj, expect_steps_obj, expect_interruptions_obj, processing_times_matrix, args)
