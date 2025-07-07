@@ -12,3 +12,7 @@ not_mine/
 .vscode/
 
 .venv
+
+src/expanded_placement/res/processing_test.html
+
+src_odevzdat

@@ -110,3 +110,86 @@ def plot_init_pop(format_placement, get_medicine_labels, get_placement_colors, g
             #             assert new_hole not in individual, "New hole is already filled"
             #             holes.remove(hole)
             #             holes.append(new_hole)
+
+
+# =============================================== pregenerating of k shortest paths ==========================================
+
+def create_grid_graph(n: int, m: int, unavailable_nodes: list[tuple[int, int]]):
+    G = nx.Graph()
+    for i in range(n):
+        for j in range(m):
+            if (i, j) not in unavailable_nodes:
+                G.add_node((i, j))
+    directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+    for i in range(n):
+        for j in range(m):
+            if (i, j) not in unavailable_nodes:
+                for di, dj in directions:
+                    ni, nj = i + di, j + dj
+                    if 0 <= ni < n and 0 <= nj < m and (ni, nj) not in unavailable_nodes:
+                        G.add_edge((i, j), (ni, nj))
+    return G
+
+#   if not os.path.exists(f"{args.layout}_shortest_paths.pkl"):
+#         print("Calculating k shortest simple paths...")
+#         G = create_grid_graph(layout["n"], layout["m"], layout["unavailable_locations"])
+#         shortest_simple_paths = {} # (source_id, target_id) -> list of k paths (each path is a list of position ids)
+#         shortest_simple_paths_locs = {} 
+#         k = 7
+#         for source in all_available_positions:
+#             for target in all_available_positions:
+#                 if source != target:
+#                     source_id = reverse_coord_to_idx[source]
+#                     target_id = reverse_coord_to_idx[target]
+#                     k_paths = list(islice(nx.shortest_simple_paths(G, source, target), k))
+#                     k_paths_ids = [[reverse_coord_to_idx[pos] for pos in path] for path in k_paths]
+#                     shortest_simple_paths_locs[(source, target)] = k_paths
+#                     shortest_simple_paths[(source_id, target_id)] = k_paths_ids
+#         layout["shortest_simple_paths"] = shortest_simple_paths_locs
+#         # store to pickle
+#         with open(f"{args.layout}_shortest_paths.pkl", "wb") as f:
+#             pickle.dump(shortest_simple_paths_locs, f)
+#     else:
+#         with open(f"{args.layout}_shortest_paths.pkl", "rb") as f:
+#             shortest_simple_paths_locs = pickle.load(f)
+#             # shortest_simple_paths = {}
+#             # shortest_simple_paths = np.zeros((len(interface_position_idxs), len(interface_position_idxs))) - 1
+#             shortest_simple_paths = []
+#             for i in range(len(all_available_position_idxs)):
+#                 shortest_simple_paths.append([])
+#                 for j in range(len(all_available_position_idxs)):
+#                     shortest_simple_paths[i].append([])
+
+#             for (source, target), paths in shortest_simple_paths_locs.items():
+#                 source_id = reverse_coord_to_idx[source]
+#                 target_id = reverse_coord_to_idx[target]
+#                 k = len(paths)
+#                 paths_ids = [[reverse_coord_to_idx[pos] for pos in path] for path in paths]
+#                 shortest_simple_paths[source_id][target_id] = paths_ids
+
+
+
+# INTERRUPTIONS UPPER BOUND ON LENGTH: 
+# G_dispensers_only = create_grid_graph(dispensers_loc_coords)
+# is_A_valid2 = A_coord in dispensers_loc_coords
+# is_B_valid2 = B_coord in dispensers_loc_coords
+# if not is_A_valid2:
+#     G_dispensers_only.add_node(A_coord)
+#     for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+#         neighbor = (A_coord[0] + dx, A_coord[1] + dy)
+#         if neighbor in dispensers_loc_coords or neighbor == B_coord:
+#             G_dispensers_only.add_edge(A_coord, neighbor)
+# if not is_B_valid2:
+#     G_dispensers_only.add_node(B_coord)
+#     for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+#         neighbor = (B_coord[0] + dx, B_coord[1] + dy)
+#         if neighbor in dispensers_loc_coords or neighbor == A_coord:
+#             G_dispensers_only.add_edge(B_coord, neighbor)
+# len_with_overprocessed = shortest_path_len(G_dispensers_only, A_coord, B_coord)
+# nearest_paths = nx.shortest_simple_paths(G_dispensers_only, A_coord, B_coord)
+# k_nearest = list( islice(nearest_paths, 4))
+
+# if not is_A_valid2:
+#     G_dispensers_only.remove_node(A_coord)
+# if not is_B_valid2:
+#     G_dispensers_only.remove_node(B_coord)

@@ -1,0 +1,248 @@
+{
+    "n_tiles": 60,
+    "n_dispensers": 80,
+    "packing": {
+        "0": [
+            "METFORMIN"
+        ],
+        "1": [
+            "METFORMIN"
+        ],
+        "2": [
+            "METFORMIN"
+        ],
+        "3": [
+            "METFORMIN"
+        ],
+        "4": [
+            "METFORMIN"
+        ],
+        "5": [
+            "LISINOPRIL"
+        ],
+        "6": [
+            "LISINOPRIL"
+        ],
+        "7": [
+            "LISINOPRIL"
+        ],
+        "8": [
+            "LISINOPRIL"
+        ],
+        "9": [
+            "LISINOPRIL"
+        ],
+        "10": [
+            "METOPROLOL"
+        ],
+        "11": [
+            "METOPROLOL"
+        ],
+        "12": [
+            "METOPROLOL"
+        ],
+        "13": [
+            "METOPROLOL"
+        ],
+        "14": [
+            "METOPROLOL"
+        ],
+        "15": [
+            "SIMVASTATIN"
+        ],
+        "16": [
+            "SIMVASTATIN"
+        ],
+        "17": [
+            "SIMVASTATIN"
+        ],
+        "18": [
+            "SIMVASTATIN"
+        ],
+        "19": [
+            "HYDROCHLOROTHIAZIDE"
+        ],
+        "20": [
+            "HYDROCHLOROTHIAZIDE"
+        ],
+        "21": [
+            "HYDROCHLOROTHIAZIDE"
+        ],
+        "22": [
+            "HYDROCHLOROTHIAZIDE"
+        ],
+        "23": [
+            "FUROSEMIDE"
+        ],
+        "24": [
+            "FUROSEMIDE"
+        ],
+        "25": [
+            "FUROSEMIDE"
+        ],
+        "26": [
+            "ATENOLOL"
+        ],
+        "27": [
+            "ATENOLOL"
+        ],
+        "28": [
+            "ATENOLOL"
+        ],
+        "29": [
+            "ATORVASTATIN"
+        ],
+        "30": [
+            "ATORVASTATIN"
+        ],
+        "31": [
+            "ATORVASTATIN"
+        ],
+        "32": [
+            "ASPIRIN"
+        ],
+        "33": [
+            "ASPIRIN"
+        ],
+        "34": [
+            "LEVOTHYROXINE"
+        ],
+        "35": [
+            "LEVOTHYROXINE"
+        ],
+        "36": [
+            "WARFARIN"
+        ],
+        "37": [
+            "WARFARIN"
+        ],
+        "38": [
+            "LOSARTAN"
+        ],
+        "39": [
+            "LOSARTAN",
+            "TAMSULOSIN"
+        ],
+        "40": [
+            "AMLODIPINE"
+        ],
+        "41": [
+            "AMLODIPINE"
+        ],
+        "42": [
+            "POTASSIUM CHLORIDE",
+            "ALENDRONATE"
+        ],
+        "43": [
+            "POTASSIUM CHLORIDE"
+        ],
+        "44": [
+            "IBUPROFEN",
+            "GLIPIZIDE"
+        ],
+        "45": [
+            "IBUPROFEN",
+            "INSULIN GLARGINE"
+        ],
+        "46": [
+            "OMEPRAZOLE",
+            "CLOPIDOGREL"
+        ],
+        "47": [
+            "OMEPRAZOLE",
+            "CITALOPRAM"
+        ],
+        "48": [
+            "VALSARTAN",
+            "ESOMEPRAZOLE"
+        ],
+        "49": [
+            "VALSARTAN",
+            "GABAPENTIN"
+        ],
+        "50": [
+            "TRAMADOL",
+            "SERTRALINE"
+        ],
+        "51": [
+            "PRAVASTATIN",
+            "LOVASTATIN"
+        ],
+        "52": [
+            "RANITIDINE",
+            "PREDNISONE"
+        ],
+        "53": [
+            "PRAVASTATIN",
+            "ALLOPURINOL"
+        ],
+        "54": [
+            "ALBUTEROL",
+            "FEXOFENADINE"
+        ],
+        "55": [
+            "CLOPIDOGREL",
+            "CARVEDILOL"
+        ],
+        "56": [
+            "ALBUTEROL",
+            "FLUTICASONE NASAL",
+            "MONTELUKAST"
+        ],
+        "57": [
+            "GABAPENTIN",
+            "TRAMADOL",
+            "ZOLPIDEM"
+        ],
+        "58": [
+            "GLIPIZIDE",
+            "PIOGLITAZONE"
+        ],
+        "59": [
+            "ESOMEPRAZOLE",
+            "ROSUVASTATIN"
+        ]
+    },
+    "sorted_names": [
+        "METFORMIN",
+        "LISINOPRIL",
+        "METOPROLOL",
+        "SIMVASTATIN",
+        "HYDROCHLOROTHIAZIDE",
+        "FUROSEMIDE",
+        "ATENOLOL",
+        "ATORVASTATIN",
+        "ASPIRIN",
+        "LEVOTHYROXINE",
+        "WARFARIN",
+        "LOSARTAN",
+        "AMLODIPINE",
+        "POTASSIUM CHLORIDE",
+        "IBUPROFEN",
+        "OMEPRAZOLE",
+        "VALSARTAN",
+        "ESOMEPRAZOLE",
+        "GABAPENTIN",
+        "GLIPIZIDE",
+        "CLOPIDOGREL",
+        "PRAVASTATIN",
+        "ALBUTEROL",
+        "TRAMADOL",
+        "SERTRALINE",
+        "LOVASTATIN",
+        "RANITIDINE",
+        "ALLOPURINOL",
+        "FEXOFENADINE",
+        "CARVEDILOL",
+        "PIOGLITAZONE",
+        "INSULIN GLARGINE",
+        "ROSUVASTATIN",
+        "CITALOPRAM",
+        "ALENDRONATE",
+        "PREDNISONE",
+        "FLUTICASONE NASAL",
+        "MONTELUKAST",
+        "TAMSULOSIN",
+        "ZOLPIDEM"
+    ]
+}
