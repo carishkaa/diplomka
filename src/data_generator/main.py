@@ -11,7 +11,7 @@ def is_pos_def(x):
     return np.all(np.linalg.eigvals(x) >= 0)
 
 # https://research.wu.ac.at/ws/portalfiles/portal/18952613/document.pdf
-def generate_multivariate_binary(num_vars, num_samples, marginal_probs, corr_matrix, threshold_drugs_per_sample: tuple=None, weights=None):
+def generate_multivariate_binary(num_vars, num_samples, marginal_probs, corr_matrix, threshold_drugs_per_sample: tuple=None, weights=None, simulvals=None):
     if len(marginal_probs) != num_vars:
         raise ValueError("Number of variables does not match the length of the means vector.")
 
@@ -19,7 +19,7 @@ def generate_multivariate_binary(num_vars, num_samples, marginal_probs, corr_mat
         raise ValueError("Correlation matrix dimensions do not match the number of variables.")
 
     commonprob = bnd.bincorr2commonprob(margprob=marginal_probs, bincorr=corr_matrix)
-    sigma = bnd.commonprob2sigma(commonprob)
+    sigma = bnd.commonprob2sigma(commonprob, simulvals=simulvals)
     if not is_pos_def(sigma):
         sigma = cov_nearest(sigma)
 
@@ -34,13 +34,20 @@ def generate_multivariate_binary(num_vars, num_samples, marginal_probs, corr_mat
 
     # Convert to binary by choosing top k drugs per sample.
     min_drugs_per_sample, max_drugs_per_sample = threshold_drugs_per_sample
-    if weights is None:
-        weights = [1] * (max_drugs_per_sample - min_drugs_per_sample + 1)  # Default to uniform weights
-    norm_weights = weights / np.sum(weights)
-    drugs_per_sample = np.random.choice(range(min_drugs_per_sample, max_drugs_per_sample + 1), size=num_samples, p=norm_weights)
+    # if weights is None:
+    #     weights = [1] * (max_drugs_per_sample - min_drugs_per_sample + 1)  # Default to uniform weights
+    # norm_weights = weights / np.sum(weights)
+    # drugs_per_sample = np.random.choice(range(min_drugs_per_sample, max_drugs_per_sample + 1), size=num_samples, p=norm_weights)
     sample_binary = np.zeros_like(sample_norm)
     for i in range(num_samples):
-        indices = np.argpartition(sample_norm[i], -drugs_per_sample[i])[-drugs_per_sample[i]:]
+        # indices = np.argpartition(sample_norm[i], -drugs_per_sample[i])[-drugs_per_sample[i]:]
+        count_positive = np.sum(sample_norm[i] > 0)
+        if count_positive <= min_drugs_per_sample:
+            indices = np.argpartition(sample_norm[i], -min_drugs_per_sample)[-min_drugs_per_sample:]
+        elif count_positive >= max_drugs_per_sample:
+            indices = np.argpartition(sample_norm[i], -max_drugs_per_sample)[-max_drugs_per_sample:]
+        else:
+            indices = np.argpartition(sample_norm[i], -count_positive)[-count_positive:]
         sample_binary[i][indices] = 1
 
     return sample_binary, sample_metadata

@@ -499,7 +499,7 @@ class ExpandedPlacementProblem(ElementwiseProblem):
         dispensers_loc_coords = [self.all_available_positions[loc] for loc in x[self.n_interfaces:]]
         all_loc_coords = [self.all_available_positions[loc] for loc in x]
         overprocessing_locations = x[np.where(out["processing_time"] > bound_processing_time)[0]]
-        overprocessing_loc_coords = [self.all_available_positions[loc] for loc in overprocessing_locations]
+        overprocessing_loc_coords = [self.all_available_positions[loc] for loc in overprocessing_locations] # THIS to compare
         valid_loc_coords = [loc for loc in self.all_available_positions if loc in dispensers_loc_coords and loc not in overprocessing_loc_coords]
         valid_loc_coords = set(valid_loc_coords)
         G = create_grid_graph(valid_loc_coords)
@@ -650,8 +650,8 @@ class MyOutput(Output):
         self.f_min = RoundedColumn("f_min", width=13, ndigits_round=5)
         self.f_interruption = RoundedColumn("f_interruptions", width=15, ndigits_round=5)
         self.F_expected_steps = RoundedColumn("f_expected_steps", width=15, ndigits_round=5)
-        self.F_max_processing_times = RoundedColumn("F_max_processing_time", width=15, ndigits_round=5)
-        self.columns += [self.f_avg, self.f_min, self.f_interruption, self.F_expected_steps, self.F_max_processing_times]
+        # self.F_max_processing_times = RoundedColumn("F_max_processing_time", width=15, ndigits_round=5)
+        self.columns += [self.f_avg, self.f_min, self.f_interruption, self.F_expected_steps]
 
     def update(self, algorithm):
         super().update(algorithm)
@@ -661,7 +661,7 @@ class MyOutput(Output):
         interruptions = algorithm.pop.get("F_interruptions")[argmin_idx]
         self.f_interruption.set(round(interruptions, 3) if interruptions else None)
         self.F_expected_steps.set(algorithm.pop.get("F_expected_steps")[argmin_idx])
-        self.F_max_processing_times.set(algorithm.pop.get("F_max_processing_time")[argmin_idx])
+        # self.F_max_processing_times.set(algorithm.pop.get("F_max_processing_time")[argmin_idx])
 
 class RoundedColumn(Column):
     def __init__(self, name, width=13, func=None, truncate=True, ndigits_round=4) -> None:
